@@ -1,0 +1,13 @@
+sample_id,date,group,height_cm
+PG-001,2026-03-02,control,12.4
+PG-002,2026-03-02,treated,15.1
+PG-003,2026-03-03,control,13.0
+PG-004,2026-03-03,treated,
+PG-005,2026-03-04,control,12.7
+PG-006,2026-03-04,treated,88.6
+PG-007,2026-03-05,control,
+PG-008,2026-03-05,treated,16.8
+PG-009,2026-03-06,control,13.5
+PG-010,2026-03-06,treated,-4.2
+PG-011,2026-03-07,control,14.1
+PG-012,2026-03-07,treated,15.9
