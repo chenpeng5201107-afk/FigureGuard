@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   EXAMPLE_CSV_PATH,
   MAX_CSV_BYTES,
+  MAX_ITEMIZED_ISSUES,
   loadExampleCsv,
   parseCsvText,
   readCsvFile,
@@ -12,6 +13,15 @@ import {
 import type { CsvIssue } from '../types/csv';
 
 const exampleCsvUrl = new URL(`../../public/${EXAMPLE_CSV_PATH}`, import.meta.url);
+
+/** 每行都比表头少一个字段：用来复现「几万条格式问题」的错误密集场景。 */
+function raggedRows(rowCount: number, separator = ','): string {
+  const lines = [['a', 'b', 'c'].join(separator)];
+  for (let index = 0; index < rowCount; index += 1) {
+    lines.push([String(index), '1'].join(separator));
+  }
+  return lines.join('\n');
+}
 
 const VALID_CSV = [
   'sample_id,date,group,height_cm',
@@ -362,6 +372,158 @@ describe('边界：字段数不一致与分隔符', () => {
 
   it('逗号分隔时不出现分隔符提示', () => {
     expect(codesOf(parseOk('a,b\n1,2\n').issues)).not.toContain('DelimiterDetected');
+  });
+});
+
+describe('回归：合法表头 __parsed_extra 不得被删列', () => {
+  it('表头叫 __parsed_extra 时两列都保留，数据不变', () => {
+    const table = parseOk('__parsed_extra,x\nhello,world\n');
+
+    expect(table.columns).toEqual(['__parsed_extra', 'x']);
+    expect(table.columnCount).toBe(2);
+    expect(table.rows).toEqual([['hello', 'world']]);
+    expect(table.recordCount).toBe(1);
+    expect(table.structure.state).toBe('sound');
+    // 与解析器内部键同名属于需要说明的事实，但不改变数据本身。
+    expect(codesOf(table.issues)).toContain('ParsedExtraHeaderCollision');
+    expect(issueOf(table.issues, 'ParsedExtraHeaderCollision').severity).toBe('notice');
+  });
+
+  it('__parsed_extra 列与多余字段同时出现时，保留真实单元格并只丢弃多出来的值', () => {
+    const table = parseOk('__parsed_extra,x\nhello,world\na,b,c\n');
+
+    expect(table.columns).toEqual(['__parsed_extra', 'x']);
+    expect(table.rows).toEqual([
+      ['hello', 'world'],
+      ['a', 'b'],
+    ]);
+    expect(table.structure.rowsWithExtraFields).toBe(1);
+    expect(table.structure.droppedExtraValues).toBe(1);
+    expect(table.structure.state).toBe('degraded');
+  });
+
+  it('__parsed_extra 列本身是空值时仍然保留空字符串', () => {
+    const table = parseOk('a,__parsed_extra\n1,\n');
+
+    expect(table.columns).toEqual(['a', '__parsed_extra']);
+    expect(table.rows).toEqual([['1', '']]);
+  });
+
+  it('单列且列名就是 __parsed_extra 时不丢列', () => {
+    const table = parseOk('__parsed_extra\nv1\nv2\n');
+
+    expect(table.columns).toEqual(['__parsed_extra']);
+    expect(table.rows).toEqual([['v1'], ['v2']]);
+  });
+
+  it('普通文件的多余字段仍然不进列、只计入丢弃数量', () => {
+    const table = parseOk('a,b,c\n1,2\n3,4,5,6\n');
+
+    expect(table.columns).toEqual(['a', 'b', 'c']);
+    expect(table.columns).not.toContain('__parsed_extra');
+    expect(table.structure.rowsWithExtraFields).toBe(1);
+    expect(table.structure.rowsWithMissingFields).toBe(1);
+    expect(table.structure.droppedExtraValues).toBe(1);
+  });
+});
+
+describe('回归：结构告警状态（供后续质检判断数据是否可信）', () => {
+  it('行列一致的文件结构状态为 sound，原因为空', () => {
+    const table = parseOk(VALID_CSV);
+
+    expect(table.structure).toMatchObject({
+      state: 'sound',
+      rowsWithMissingFields: 0,
+      rowsWithExtraFields: 0,
+      droppedExtraValues: 0,
+      renamedHeaderColumns: 0,
+      mixedLineEndings: false,
+    });
+    expect(table.structure.reasons).toEqual([]);
+  });
+
+  it('表头重名只改名不丢数据，不算结构降级', () => {
+    const table = parseOk('name,name\nA,B\n');
+
+    expect(table.structure.renamedHeaderColumns).toBe(1);
+    expect(table.structure.state).toBe('sound');
+    expect(codesOf(table.issues)).toContain('DuplicateHeaderRenamed');
+  });
+
+  it('缺列与多列都记入结构降级原因，并给出真实数量', () => {
+    const table = parseOk('a,b\n1,2,3,4\n5\n');
+
+    expect(table.structure.state).toBe('degraded');
+    expect(table.structure.rowsWithExtraFields).toBe(1);
+    expect(table.structure.rowsWithMissingFields).toBe(1);
+    expect(table.structure.droppedExtraValues).toBe(2);
+    expect(table.structure.reasons.join('')).toContain('字段数少于表头');
+    expect(table.structure.reasons.join('')).toContain('没有进入表格');
+  });
+
+  it('混用换行符同样标为降级', () => {
+    const table = parseOk('a,b\n1,2\r\n3,4\r\n');
+
+    expect(table.structure.mixedLineEndings).toBe(true);
+    expect(table.structure.state).toBe('degraded');
+    expect(table.structure.reasons.join('')).toContain('混用');
+  });
+});
+
+describe('回归：错误密集型 CSV 的开销与上限', () => {
+  it('14 万条缺列记录不会撑爆调用栈（修复前 RangeError）', () => {
+    const started = Date.now();
+    const table = parseOk(raggedRows(140000));
+
+    expect(table.recordCount).toBe(140000);
+    expect(table.issueTotals.errors).toBe(140000);
+    expect(Date.now() - started).toBeLessThan(8000);
+  });
+
+  it('明细有上限，但总条数与类型分布是全量真实值', () => {
+    const table = parseOk(raggedRows(3000));
+
+    expect(table.issues.length).toBe(MAX_ITEMIZED_ISSUES);
+    expect(table.issueTotals).toEqual({ errors: 3000, notices: 0 });
+    const itemized = table.issues.filter((issue) => issue.code === 'TooFewFields');
+    expect(itemized.length).toBe(MAX_ITEMIZED_ISSUES);
+    expect(itemized[0].fileLine).toBe(2);
+    const group = table.issueGroups.find((candidate) => candidate.code === 'TooFewFields');
+    expect(group?.total).toBe(3000);
+    expect(group?.itemized).toBe(MAX_ITEMIZED_ISSUES);
+    expect(group?.label).toBe('字段数少于表头');
+    expect(table.structure.rowsWithMissingFields).toBe(3000);
+  });
+
+  it('明细上限之内仍然逐条换算物理行号', () => {
+    const table = parseOk('a,b,c\n1,2\n3,4\n5,6\n');
+
+    expect(table.issues.map((issue) => issue.fileLine)).toEqual([2, 3, 4]);
+  });
+
+  it('派生结构提示不会因为 Papa 错误挤满明细而消失', () => {
+    const table = parseOk(raggedRows(1000, ';'));
+
+    expect(table.issueTotals.errors).toBe(1000);
+    expect(codesOf(table.issues)).toContain('DelimiterDetected');
+    expect(table.issues.filter((issue) => issue.origin === 'papaparse').length).toBe(MAX_ITEMIZED_ISSUES);
+  });
+
+  it('issueTotals 恒等于各分组的真实条数之和', () => {
+    for (const text of [VALID_CSV, 'a,b,c\n1,2\n3,4,5,6\n', raggedRows(500), 'a;b\n1;2\n', 'name\nA\n']) {
+      const table = parseOk(text);
+      const errors = table.issueGroups
+        .filter((group) => group.severity === 'error')
+        .reduce((sum, group) => sum + group.total, 0);
+      const notices = table.issueGroups
+        .filter((group) => group.severity === 'notice')
+        .reduce((sum, group) => sum + group.total, 0);
+      const itemized = table.issueGroups.reduce((sum, group) => sum + group.itemized, 0);
+
+      expect(table.issueTotals).toEqual({ errors, notices });
+      expect(itemized).toBe(table.issues.length);
+      expect(itemized).toBeLessThanOrEqual(errors + notices);
+    }
   });
 });
 

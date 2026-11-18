@@ -52,16 +52,17 @@ export default function App() {
     panel.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'start' });
   }, [resultToken, outcome]);
 
-  const summary =
-    outcome?.status === 'ok'
-      ? `解析完成：${formatCount(outcome.table.recordCount)} 行 ${formatCount(
-          outcome.table.columnCount,
-        )} 列，${
-          outcome.table.issues.length === 0
-            ? '没有格式提示'
-            : `${outcome.table.issues.filter((issue) => issue.severity === 'error').length} 条格式问题、${outcome.table.issues.filter((issue) => issue.severity === 'notice').length} 条说明提示`
-        }。`
-      : '';
+  // 播报用真实总条数（issueTotals），而不是有上限的明细条数。
+  const parsedTable = outcome?.status === 'ok' ? outcome.table : null;
+  const summary = parsedTable
+    ? `解析完成：${formatCount(parsedTable.recordCount)} 行 ${formatCount(parsedTable.columnCount)} 列，${
+        parsedTable.issueTotals.errors + parsedTable.issueTotals.notices === 0
+          ? '没有格式提示'
+          : `${formatCount(parsedTable.issueTotals.errors)} 条格式问题、${formatCount(
+              parsedTable.issueTotals.notices,
+            )} 条说明提示`
+      }。`
+    : '';
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -88,7 +89,7 @@ export default function App() {
       </main>
       <footer className="border-t border-slate-200 bg-white">
         <p className="mx-auto max-w-6xl px-4 py-6 text-xs leading-relaxed text-slate-500 sm:px-6">
-          FigureGuard 当前版本：CSV 读取与数据预览。示例数据为合成的植物生长记录，仅用于功能演示。
+          FigureGuard 当前版本：CSV 读取、数据预览、缺失值与重复记录统计、字段类型识别与类型冲突候选提示、图表实验室（柱状图 / 散点图 / 折线图；柱状图可逐条原始记录或按类别求平均、求和，图表标题与坐标轴标题、单位可自定义）。示例数据为合成的植物生长记录，仅用于功能演示。
         </p>
       </footer>
     </div>

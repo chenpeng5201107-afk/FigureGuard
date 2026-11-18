@@ -4,7 +4,7 @@ export function HeroPanel() {
       <p className="text-xs font-semibold tracking-wide text-brand sm:text-sm">
         2026 Qoder 高校创造力大赛 · StudyHack 赛道
       </p>
-      <h1 className="mt-2 max-w-3xl text-3xl leading-tight font-bold tracking-tight text-slate-900 sm:text-4xl">
+      <h1 className="mt-2 max-w-3xl text-[1.7rem] leading-tight font-bold tracking-tight text-slate-900 sm:text-4xl text-balance">
         实验数据，先看清，再分析。
       </h1>
       <p className="mt-3 max-w-2xl text-base leading-relaxed text-slate-600 sm:text-lg">
