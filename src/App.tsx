@@ -72,7 +72,7 @@ export default function App() {
         <CsvUploadPanel
           busy={isParsing}
           onFileSelected={(file) => void parseTask(() => readCsvFile(file))}
-          onUseExample={() => void parseTask(loadExampleCsv)}
+          onUseExample={(key) => void parseTask(() => loadExampleCsv(key))}
         />
         {/* 常驻的柔和播报：结果变化时读屏能跟上，不需要先看见面板 */}
         <p role="status" aria-live="polite" className="sr-only">
@@ -89,7 +89,9 @@ export default function App() {
       </main>
       <footer className="border-t border-slate-200 bg-white">
         <p className="mx-auto max-w-6xl px-4 py-6 text-xs leading-relaxed text-slate-500 sm:px-6">
-          FigureGuard 当前版本：CSV 读取、数据预览、缺失值与重复记录统计、字段类型识别与类型冲突候选提示、图表实验室（柱状图 / 散点图 / 折线图；柱状图可逐条原始记录或按类别求平均、求和，图表标题与坐标轴标题、单位可自定义）。示例数据为合成的植物生长记录，仅用于功能演示。
+          FigureGuard 在浏览器本地完成 CSV 解析、数据质量诊断、图表生成与表达检查、修复对比与成果导出：不上传文件、不需要登录、不调用外部接口。
+          功能范围与未实现项见上方「当前版本已覆盖 / 尚未实现」。
+          示例数据（植物生长记录、非零基线演示 A=96 / B=98 / C=97）均为合成演示数据，非真实科研实验结果。
         </p>
       </footer>
     </div>

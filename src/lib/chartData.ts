@@ -103,8 +103,13 @@ export interface CategorySample {
 /** 一个类别的聚合结果。 */
 export interface CategoryGroup {
   key: string;
-  /** 完整精度聚合值：平均值 = 组内和 / 样本数，求和 = 组内累加，都不做四舍五入。 */
+  /**
+   * 完整精度聚合值：平均值 = 组内和 / 样本数，求和 = 组内累加，都不做四舍五入。
+   * `representable` 为 false 时这里是 ±Infinity，只用于展示「无法计算」，不会进入图表数据点。
+   */
   value: number;
+  /** 聚合结果能否用双精度浮点有限表示。false 说明组内记录本身都是有效数值，只是求和/平均超出可表示范围。 */
+  representable: boolean;
   /** 组内首条记录的原始行下标。 */
   firstRowIndex: number;
   /** 组内全部有效样本，按上传顺序。 */
@@ -127,12 +132,17 @@ export interface ChartDataResult {
   invalidExcluded: number;
   /** 实际进入图表的展示单元数量：柱子 / 散点 / 折线观测点个数。 */
   displayedCount: number;
-  /** 有效但因展示上限未显示的**记录**数（聚合模式为该口径下未成柱类别组包含的记录数）。 */
+  /** 有效但因展示上限未显示的**记录**数（聚合模式为该口径下未成柱类别组包含的记录数，不含不可表示组的记录）。 */
   capHidden: number;
   /** 聚合模式的类别组总数（全量，不受上限影响）；其他模式为 null。 */
   categoryTotal: number | null;
-  /** 聚合模式下因展示上限没有成柱的类别组数；其他模式为 0。 */
+  /** 聚合模式下因展示上限没有成柱的类别组数（不含下面的不可表示组）；其他模式为 0。 */
   hiddenCategoryCount: number;
+  /**
+   * 聚合结果无法有限表示的类别组（例如两个 1e308 求和）。
+   * 这些组的记录仍然有效、仍然计入 `validCount`，只是不会画成柱子，样本与原始行号完整保留。
+   */
+  overflowGroups: CategoryGroup[];
   /** 排除原因细分；各子类之和与 missingExcluded / invalidExcluded 分别守恒。 */
   excludedReasons: ExcludedReasonCounts;
   /** 展示用的点（已按上限截断）。 */
@@ -165,11 +175,25 @@ function isWhitespaceOnly(text: string): boolean {
 }
 
 /**
+ * 按 UTC 组装时间戳，年份逐位对应输入。
+ *
+ * 不能直接用 `Date.UTC(year, ...)`：ECMAScript 规定 0–99 的年份先补成 1900–1999，
+ * `0099-03-02` 会被静默挪到 1999-03-02，同一列里 `0099` 与 `1999` 的记录还会挤到同一时刻。
+ * `setUTCFullYear` 没有这条补年特例，因此从 UTC 纪元出发显式设置年月日与时分秒。
+ */
+function utcEpochMs(year: number, month: number, day: number, hour: number, minute: number, second: number): number {
+  const stamp = new Date(0);
+  stamp.setUTCFullYear(year, month - 1, day);
+  stamp.setUTCHours(hour, minute, second, 0);
+  return stamp.getTime();
+}
+
+/**
  * 时间轴取值判定。
  *
- * - 复用 `columnTypes` 的年在前后日期形态与日历校验，不另写一套判断规则，也不依赖有地区歧义的 `Date.parse()`。
+ * - 复用 `columnTypes` 的年在前日期形态与日历校验，不另写一套判断规则，也不依赖有地区歧义的 `Date.parse()`。
  * - 只接受能定位到**具体日期**的写法：`2026-03` 这类年月精度不足直接排除，绝不悄悄补成 3 月 1 日。
- * - 一律按 UTC 解释（`Date.UTC`）：时间戳只用于排序与刻度定位，浏览器时区不会让日期偏移一天。
+ * - 一律按 UTC 组装时间戳（`utcEpochMs`）：时间戳只用于排序与刻度定位，浏览器时区不会让日期偏移一天。
  * - 带时区偏移（`Z` / `+08:00`）的写法当前不被现有日期形态接受，按「不是支持的日期写法」排除并说明。
  */
 export function parseTimeCell(cell: CsvCellValue): TimeCellEvaluation {
@@ -183,7 +207,7 @@ export function parseTimeCell(cell: CsvCellValue): TimeCellEvaluation {
   if (!isCalendarValidDate(text)) return { state: 'invalid', invalidKind: 'invalidDate' };
   if (parts.day === null) return { state: 'invalid', invalidKind: 'coarseDate' };
 
-  const epochMs = Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour ?? 0, parts.minute ?? 0, parts.second ?? 0);
+  const epochMs = utcEpochMs(parts.year, parts.month, parts.day, parts.hour ?? 0, parts.minute ?? 0, parts.second ?? 0);
   if (!Number.isFinite(epochMs)) return { state: 'invalid', invalidKind: 'invalidDate' };
   return { state: 'valid', epochMs };
 }
@@ -224,12 +248,57 @@ function capOf(kind: ChartKind): number {
 }
 
 /**
+ * 补偿求和（Neumaier 版 Kahan）：每加一个数就把这一步舍入掉的低位记进 `compensation`，
+ * 因此 `1 + 1e308 - 1e308` 不会像朴素累加那样把 `1` 吞掉。
+ * 组内数值太大时中间和仍会溢出成 ±Infinity（进而 NaN），调用方据此再走归一化路径。
+ */
+function compensatedTotal(values: readonly number[]): number {
+  let sum = 0;
+  let compensation = 0;
+  for (const value of values) {
+    const total = sum + value;
+    compensation += Math.abs(sum) >= Math.abs(value) ? sum - total + value : value - total + sum;
+    sum = total;
+  }
+  return sum + compensation;
+}
+
+/** 组内求和与平均的结果：两个值都可能在双精度下无法有限表示。 */
+interface ReducedValues {
+  total: number;
+  mean: number;
+}
+
+/**
+ * 稳定地算出一组有限数值的和与平均值。
+ *
+ * - 先按原值补偿累加：普通数据的和本来就装得下，结果与朴素累加同量级且更准。
+ * - 只有直接累加溢出时才改走归一化路径：按最大绝对值 `scale` 把每个数缩到 `[-1, 1]` 再累加，
+ *   最后乘回 `scale`。这样 `1e308 + 1e308` 的平均值是 `1e308`（可以表示），
+ *   `1.5e308 + 1.5e308 - 1.5e308` 的和是 `1.5e308`（中间溢出被救回）。
+ * - 平均值走 `scale × (归一化和 ÷ n)`，商不超过 1，因此只要组内最大值可表示，平均值必定可表示。
+ * - 归一化后仍然溢出，说明真实的和确实超出双精度范围，如实返回 ±Infinity 交给调用方标注。
+ */
+function reduceValues(values: readonly number[]): ReducedValues {
+  const count = values.length;
+  const direct = compensatedTotal(values);
+  if (Number.isFinite(direct)) return { total: direct, mean: direct / count };
+
+  let scale = 0;
+  for (const value of values) scale = Math.max(scale, Math.abs(value));
+  const normalized = compensatedTotal(values.map((value) => value / scale));
+  return { total: normalized * scale, mean: scale * (normalized / count) };
+}
+
+/**
  * 按类别聚合，纯函数：输入逐条有效样本，输出一组新对象。
  *
  * - 分组键是类别文本本身（上游已去掉首尾空白），大小写不同、空格位置不同的写法视为不同类别，绝不跨类别合并。
  * - 组顺序按该类别第一次出现的顺序，与上传顺序一致，重复计算结果完全相同。
  * - 平均值 = 组内累加 / 组内**有效**样本数；缺失与无效记录在上游已被排除，不进入分子也不进入分母。
  * - 0、负数与合法小数照常参与计算；结果保留完整精度，缩略小数只发生在展示文本上。
+ * - 极端大数用 `reduceValues` 的稳定求和，不会因为中间累加溢出就把可表示的平均值算成 Infinity；
+ *   确实无法有限表示的结果标 `representable: false`，样本与行号照旧保留。
  * - 不合并、不删除、不排序原始记录，误差棒与显著性一概不生成。
  */
 export function aggregateByCategory(
@@ -238,25 +307,29 @@ export function aggregateByCategory(
 ): CategoryGroup[] {
   const groups: CategoryGroup[] = [];
   const indexByKey = new Map<string, number>();
-  const sums = new Map<string, number>();
 
   for (const sample of samples) {
     let groupIndex = indexByKey.get(sample.category);
     if (groupIndex === undefined) {
       groupIndex = groups.length;
       indexByKey.set(sample.category, groupIndex);
-      sums.set(sample.category, 0);
-      groups.push({ key: sample.category, value: 0, firstRowIndex: sample.rowIndex, samples: [] });
+      groups.push({
+        key: sample.category,
+        value: 0,
+        representable: true,
+        firstRowIndex: sample.rowIndex,
+        samples: [],
+      });
     }
-    const group = groups[groupIndex];
     // 组内存副本：聚合结果与调用方传入的样本对象不再共享引用，后续步骤改不到原始记录。
-    group.samples.push({ ...sample });
-    sums.set(sample.category, (sums.get(sample.category) ?? 0) + sample.value);
+    groups[groupIndex].samples.push({ ...sample });
   }
 
   for (const group of groups) {
-    const total = sums.get(group.key) ?? 0;
-    group.value = method === 'mean' ? total / group.samples.length : total;
+    const reduced = reduceValues(group.samples.map((sample) => sample.value));
+    const value = method === 'mean' ? reduced.mean : reduced.total;
+    group.value = value;
+    group.representable = Number.isFinite(value);
   }
   return groups;
 }
@@ -303,7 +376,8 @@ function aggregatePointOf(group: CategoryGroup): ChartPoint {
  * - 遍历完整数据集（`table.recordCount`），与表格 50 行分页无关；
  * - 每条记录只归入有效 / 缺失 / 无效三者之一，缺失优先于无效，保证「只计一次」；
  * - 原始记录模式的重复类别附数据行号保证标签唯一，多条记录不会被错误合并；
- * - 聚合模式按类别组截断，整组要么成柱要么整组不显示，不会因为视觉截断把不同类别并到一起。
+ * - 聚合模式按类别组截断，整组要么成柱要么整组不显示，不会因为视觉截断把不同类别并到一起；
+ * - 聚合值无法有限表示的组进 `overflowGroups` 而不是数据点，其记录仍算有效，不会被说成数值无效。
  *
  * xIndex / yIndex 必须是已通过字段适配校验的合法列下标，UI 在此之前先走空状态。
  */
@@ -370,9 +444,11 @@ export function computeChartData(
 
   let points: ChartPoint[];
   let groups: CategoryGroup[] = [];
+  let overflowGroups: CategoryGroup[] = [];
   let categoryTotal: number | null = null;
   let hiddenCategoryCount = 0;
-  let usedRecords: number;
+  /** 只因单图展示上限没排上的有效记录数：不可表示组的记录另算，不算触顶。 */
+  let capHidden = 0;
 
   if (aggregated) {
     const allGroups = aggregateByCategory(
@@ -385,13 +461,16 @@ export function computeChartData(
       effectiveAggregation === 'sum' ? 'sum' : 'mean',
     );
     categoryTotal = allGroups.length;
-    groups = allGroups.slice(0, cap);
-    hiddenCategoryCount = allGroups.length - groups.length;
+    // 聚合结果无法有限表示的组不画柱（Infinity 不能进数据点），但记录仍然有效、样本与行号照旧保留。
+    const drawable = allGroups.filter((group) => group.representable);
+    overflowGroups = allGroups.filter((group) => !group.representable);
+    groups = drawable.slice(0, cap);
+    hiddenCategoryCount = drawable.length - groups.length;
     points = groups.map(aggregatePointOf);
-    usedRecords = groups.reduce((sum, group) => sum + group.samples.length, 0);
+    capHidden = drawable.slice(cap).reduce((sum, group) => sum + group.samples.length, 0);
   } else {
     const displayed = orderedRows.slice(0, cap);
-    usedRecords = displayed.length;
+    capHidden = validRows.length - displayed.length;
 
     // 只在展示集合内做类别唯一化：统计该类别在展示点里出现的次数。
     const categoryCounts = new Map<string, number>();
@@ -444,9 +523,10 @@ export function computeChartData(
     missingExcluded,
     invalidExcluded,
     displayedCount: points.length,
-    capHidden: validRows.length - usedRecords,
+    capHidden,
     categoryTotal,
     hiddenCategoryCount,
+    overflowGroups,
     excludedReasons,
     points,
     groups,
@@ -661,6 +741,12 @@ export interface ChartAxisMeta {
   /** 坐标轴上真正显示的标注（轴标题 + 单位）；省略时跟随字段名。 */
   xName?: string;
   yName?: string;
+  /**
+   * 柱状图纵轴下界（Day 7 Y 轴起点）：来自 `resolveYAxisStart().appliedMin`，是真正用于绘图的配置。
+   * 传入有限数值时写进 ECharts `yAxis.min`；为 undefined（自动模式或配置无效）时不设 min，
+   * 由 `scale:false` 自动包含零基线。诊断必须与本字段保持一致，不能另算一套。
+   */
+  yMin?: number;
 }
 
 /** 轴标题在画布里的长度上限：X 轴横向、Y 轴纵向，可用宽度不同。 */
@@ -732,9 +818,14 @@ function barOption(result: ChartDataResult, meta: ChartAxisMeta): Record<string,
       type: 'value',
       name: yName,
       nameLocation: 'middle',
-      nameGap: 26,
-      // Day 7 的非零基线规则要看的是这里（不设固定 min、scale:false）与 result.yRange。
+      // 轴名要躲开最宽的刻度文字（如小数刻度 96.5），否则旋转后的轴名会与刻度重叠。
+      nameGap: 46,
+      // Day 7 的非零基线规则要看的就是这里：
+      // - 有 meta.yMin（手动且有效的起点）时把它写进 ECharts `min`，坐标轴下界随之抬高、不再包含 0；
+      // - 没有 meta.yMin（自动或配置无效退回自动）时不设 min，scale:false 让纵轴自动包含零基线。
+      // 诊断与实际绘图共用同一个 appliedMin，二者永远一致。
       scale: false,
+      ...(typeof meta.yMin === 'number' && Number.isFinite(meta.yMin) ? { min: meta.yMin } : {}),
     },
     series: [
       {
@@ -851,8 +942,9 @@ function lineOption(result: ChartDataResult, meta: ChartAxisMeta): Record<string
 export function formatTimeTick(epochMs: number): string {
   if (!Number.isFinite(epochMs)) return '';
   const date = new Date(epochMs);
-  const pad = (value: number) => String(value).padStart(2, '0');
-  const day = `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())}`;
+  const pad = (value: number, width = 2) => String(value).padStart(width, '0');
+  // 年份补足四位：CSV 里写 `0099-12-31` 的早年份，刻度不能显示成 `99-12-31`。
+  const day = `${pad(date.getUTCFullYear(), 4)}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())}`;
   const hour = date.getUTCHours();
   const minute = date.getUTCMinutes();
   const second = date.getUTCSeconds();
@@ -878,6 +970,8 @@ export interface ChartScopeSummary {
   methodNotes: string[];
   /** 触顶说明；未触顶为 null。 */
   capNote: string | null;
+  /** 聚合结果无法有限表示的类别组说明；没有这类组时为 null。 */
+  overflowNote: string | null;
 }
 
 /** 单位未确认时的固定提示：单位由用户确认，系统不猜。 */
@@ -983,6 +1077,15 @@ export function summarizeChartScope(result: ChartDataResult, context: ChartScope
       `另有 ${formatCount(result.capHidden)} 条有效记录未显示。这不是无效被排除，只是单图展示上限。`;
   }
 
+  const overflowRecords = result.overflowGroups.reduce((sum, group) => sum + group.samples.length, 0);
+  const overflowNote =
+    result.overflowGroups.length === 0
+      ? null
+      : `${formatCount(result.overflowGroups.length)} 个类别组（共 ${formatCount(overflowRecords)} 条记录）的聚合结果` +
+        '超出可表示范围，无法用有限数值表示，因此没有画柱子。' +
+        '组内记录本身都是有效数值：它们没有被算进「类型不符排除」，也不会被当成 0 或强行裁剪；' +
+        '每组的样本数 n 与原始行号仍列在下方分组明细里。';
+
   const description =
     `${kindLabel}，X 轴字段「${context.xLabel}」，Y 轴字段「${context.yLabel}」` +
     (aggregated ? `，聚合方式「${result.aggregation === 'mean' ? '按类别算术平均值' : '按类别求和'}」` : '') +
@@ -991,9 +1094,10 @@ export function summarizeChartScope(result: ChartDataResult, context: ChartScope
     `因缺失值排除 ${formatCount(result.missingExcluded)} 条，因类型不符或非有限数值排除 ${formatCount(
       result.invalidExcluded,
     )} 条` +
-    `${result.capHidden > 0 ? `，另有 ${formatCount(result.capHidden)} 条有效记录因展示上限未显示` : ''}。`;
+    `${result.capHidden > 0 ? `，另有 ${formatCount(result.capHidden)} 条有效记录因展示上限未显示` : ''}` +
+    `${result.overflowGroups.length > 0 ? `，另有 ${formatCount(overflowRecords)} 条有效记录所在类别的聚合结果无法有限表示、未成柱` : ''}。`;
 
-  return { headline, description, breakdown, methodNotes, capNote };
+  return { headline, description, breakdown, methodNotes, capNote, overflowNote };
 }
 
 function pickDataIndex(params: unknown): number {

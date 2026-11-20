@@ -21,6 +21,18 @@ export interface ChartAxisConfig {
   unit: string;
 }
 
+/**
+ * Y 轴起点配置（Day 7）。只影响柱状图的纵轴下界，不改动任何 CSV 数值或聚合结果。
+ * - `auto`：不固定起点，由 ECharts 在 `scale:false` 下自动包含零基线（含负值与 0）。
+ * - `manual`：用户输入的有限数值原文存于 `raw`；能否真正用于绘图、是否会裁剪数据，
+ *   由 `resolveYAxisStart` 结合真实 Y 范围判定，不在这里下结论。
+ */
+export interface YAxisStartConfig {
+  mode: 'auto' | 'manual';
+  /** manual 模式下的输入原文（未做数值校验）；auto 模式忽略。 */
+  raw: string;
+}
+
 export interface ChartConfig {
   /** 图表标题的用户输入原文。 */
   title: string;
@@ -28,4 +40,6 @@ export interface ChartConfig {
   titleEdited: boolean;
   xAxis: ChartAxisConfig;
   yAxis: ChartAxisConfig;
+  /** Y 轴起点（柱状图纵轴下界）配置；默认自动，含零基线。 */
+  yAxisStart: YAxisStartConfig;
 }

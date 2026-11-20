@@ -14,13 +14,18 @@ import {
   reconcileConfigForContext,
   resetAxisAfterFieldChange,
   resolveChartTitles,
+  resolveYAxisStart,
   sanitizeChartText,
   validateChartConfig,
 } from './chartConfig';
-import type { ChartConfig } from '../types/chart';
+import type { ChartConfig, YAxisStartConfig } from '../types/chart';
 
 function configOf(patch: Partial<ChartConfig>): ChartConfig {
   return { ...defaultChartConfig(), ...patch };
+}
+
+function startOf(patch: Partial<YAxisStartConfig>): YAxisStartConfig {
+  return { mode: 'auto', raw: '', ...patch };
 }
 
 const BAR_DEFAULTS = computeTitleDefaults('bar', { x: 'group', y: 'height_cm' }, 'raw');
@@ -316,5 +321,179 @@ describe('diffChartConfig：Day 7 修改前后对比所需的最小结构', () =
     first.yAxis.unit = 'cm';
     expect(second.yAxis.unit).toBe('');
     expect(second.xAxis).not.toBe(first.xAxis);
+  });
+
+  it('defaultChartConfig 的 Y 轴起点默认为自动且不含输入文本', () => {
+    expect(defaultChartConfig().yAxisStart).toEqual({ mode: 'auto', raw: '' });
+  });
+});
+
+describe('resolveYAxisStart：纵轴起点解析与裁剪校验', () => {
+  it('自动模式不改动坐标轴：appliedMin / parsed 均为 null，无错误', () => {
+    expect(resolveYAxisStart(startOf({ mode: 'auto' }), { min: 96, max: 98 })).toEqual({
+      mode: 'auto',
+      appliedMin: null,
+      parsed: null,
+      error: null,
+      notice: null,
+    });
+  });
+
+  it('手动输入 95 且数据最大值 98：作为下界应用', () => {
+    const r = resolveYAxisStart(startOf({ mode: 'manual', raw: '95' }), { min: 96, max: 98 });
+    expect(r.mode).toBe('manual');
+    expect(r.appliedMin).toBe(95);
+    expect(r.parsed).toBe(95);
+    expect(r.error).toBeNull();
+    expect(r.notice).toBeNull();
+  });
+
+  it('手动输入 0：应用为零基线', () => {
+    expect(resolveYAxisStart(startOf({ mode: 'manual', raw: '0' }), { min: 96, max: 98 }).appliedMin).toBe(0);
+  });
+
+  it('手动输入负数 -10：作为下界应用', () => {
+    expect(resolveYAxisStart(startOf({ mode: 'manual', raw: '-10' }), { min: -5, max: 20 }).appliedMin).toBe(-10);
+  });
+
+  it('手动输入小数与科学计数法：合法解析', () => {
+    expect(resolveYAxisStart(startOf({ mode: 'manual', raw: '0.5' }), { min: 1, max: 9 }).appliedMin).toBe(0.5);
+    expect(resolveYAxisStart(startOf({ mode: 'manual', raw: '1e2' }), { min: 150, max: 400 }).appliedMin).toBe(100);
+  });
+
+  it('手动输入留空：报错且不应用', () => {
+    const r = resolveYAxisStart(startOf({ mode: 'manual', raw: '   ' }), { min: 96, max: 98 });
+    expect(r.appliedMin).toBeNull();
+    expect(r.parsed).toBeNull();
+    expect(r.error).toBeTruthy();
+  });
+
+  it('手动输入非数值文字：拒绝，绝不放进 NaN', () => {
+    const r = resolveYAxisStart(startOf({ mode: 'manual', raw: 'abc' }), { min: 96, max: 98 });
+    expect(r.appliedMin).toBeNull();
+    expect(r.parsed).toBeNull();
+    expect(r.error).toContain('abc');
+  });
+
+  it('手动输入 1e999（溢出为 Infinity）：拒绝，绝不放进 Infinity', () => {
+    const r = resolveYAxisStart(startOf({ mode: 'manual', raw: '1e999' }), { min: 96, max: 98 });
+    expect(r.appliedMin).toBeNull();
+    expect(r.parsed).toBeNull();
+    expect(r.error).toContain('Infinity');
+  });
+
+  it('起点不低于数据最大值会裁掉全部柱子：阻止应用并报错，仍回显解析值', () => {
+    const r = resolveYAxisStart(startOf({ mode: 'manual', raw: '99' }), { min: 96, max: 98 });
+    expect(r.parsed).toBe(99);
+    expect(r.appliedMin).toBeNull();
+    expect(r.error).toContain('98');
+  });
+
+  it('起点恰等于数据最大值：没有可见柱子高度，按裁剪阻止', () => {
+    const r = resolveYAxisStart(startOf({ mode: 'manual', raw: '98' }), { min: 96, max: 98 });
+    expect(r.appliedMin).toBeNull();
+    expect(r.error).toBeTruthy();
+  });
+
+  it('没有数据（yRange=null）时不做裁剪判定：合法数值仍解析为下界', () => {
+    expect(resolveYAxisStart(startOf({ mode: 'manual', raw: '95' }), null).appliedMin).toBe(95);
+  });
+});
+
+describe('resolveYAxisStart：部分裁剪保护（起点高于数据最小值一律阻止）', () => {
+  function manual(raw: string, yRange: { min: number; max: number } | null) {
+    return resolveYAxisStart(startOf({ mode: 'manual', raw }), yRange);
+  }
+
+  it('数据 96–98、起点 95（低于最小值）：合法应用，无错误也无代价提示', () => {
+    const r = manual('95', { min: 96, max: 98 });
+    expect(r.appliedMin).toBe(95);
+    expect(r.error).toBeNull();
+    expect(r.notice).toBeNull();
+  });
+
+  it('数据 96–98、起点 97：96 会被裁掉，阻止应用并说明最小值', () => {
+    const r = manual('97', { min: 96, max: 98 });
+    expect(r.appliedMin).toBeNull();
+    expect(r.parsed).toBe(97);
+    expect(r.notice).toBeNull();
+    expect(r.error).toContain('高于数据最小值 96');
+    expect(r.error).toContain('看不见');
+  });
+
+  it('数据 96–98、起点 97.5（只裁掉一部分）同样阻止：不按「只差一点」放行', () => {
+    expect(manual('97.5', { min: 96, max: 98 }).appliedMin).toBeNull();
+  });
+
+  it('数据 96–98、起点 99：仍按不低于最大值阻止（原有行为不回归）', () => {
+    const r = manual('99', { min: 96, max: 98 });
+    expect(r.appliedMin).toBeNull();
+    expect(r.error).toContain('不低于数据最大值 98');
+  });
+
+  it('数据 -5–20、起点 -10：合法应用，全部数值与零基线都在范围内', () => {
+    const r = manual('-10', { min: -5, max: 20 });
+    expect(r.appliedMin).toBe(-10);
+    expect(r.error).toBeNull();
+    expect(r.notice).toBeNull();
+  });
+
+  it('数据 -5–20、起点 -1：负数 -5 被裁掉，阻止应用', () => {
+    const r = manual('-1', { min: -5, max: 20 });
+    expect(r.appliedMin).toBeNull();
+    expect(r.parsed).toBe(-1);
+    expect(r.error).toContain('高于数据最小值 -5');
+  });
+
+  it('数据 -5–20、起点 0：包含零基线也不能放行，-5 仍会被隐藏', () => {
+    const r = manual('0', { min: -5, max: 20 });
+    expect(r.appliedMin).toBeNull();
+    expect(r.parsed).toBe(0);
+    expect(r.error).toContain('高于数据最小值 -5');
+    expect(r.error).toContain('起点设成 0');
+  });
+
+  it('数据 96–98、起点 0：合法应用（正值数据下 0 不裁剪任何数值）', () => {
+    const r = manual('0', { min: 96, max: 98 });
+    expect(r.appliedMin).toBe(0);
+    expect(r.error).toBeNull();
+  });
+
+  it('起点恰好等于数据最小值：应用但给出零长度柱形的准确提示，不说成完整可辨', () => {
+    const r = manual('96', { min: 96, max: 98 });
+    expect(r.appliedMin).toBe(96);
+    expect(r.error).toBeNull();
+    expect(r.notice).toContain('退化成长度 0');
+    expect(r.notice).toContain('不能算已经完整可辨');
+  });
+
+  it('起点恰好等于数据最小值（负数）：同样应用并提示零长度柱形', () => {
+    const r = manual('-5', { min: -5, max: 20 });
+    expect(r.appliedMin).toBe(-5);
+    expect(r.notice).toContain('长度 0');
+  });
+
+  it('起点低于最小值时不产生代价提示（避免把合法配置说成有问题）', () => {
+    expect(manual('-6', { min: -5, max: 20 }).notice).toBeNull();
+  });
+
+  it('无数据（yRange=null）保持安全空状态：不虚构裁剪结论', () => {
+    const r = manual('95', null);
+    expect(r.appliedMin).toBe(95);
+    expect(r.error).toBeNull();
+    expect(r.notice).toBeNull();
+  });
+
+  it('非法文本在裁剪判定之前就被拒绝，即便数据范围存在也不应用', () => {
+    for (const raw of ['', '  ', 'NaN', 'Infinity', '1e999', '95kg', 'auto']) {
+      const r = manual(raw, { min: 96, max: 98 });
+      expect(r.appliedMin).toBeNull();
+      expect(r.error).toBeTruthy();
+    }
+  });
+
+  it('同一份起点随数据范围变化重新判定：95 对 96–98 合法、对 90–98 会裁剪', () => {
+    expect(resolveYAxisStart(startOf({ mode: 'manual', raw: '95' }), { min: 96, max: 98 }).appliedMin).toBe(95);
+    expect(resolveYAxisStart(startOf({ mode: 'manual', raw: '95' }), { min: 90, max: 98 }).appliedMin).toBeNull();
   });
 });

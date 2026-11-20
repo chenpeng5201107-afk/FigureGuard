@@ -17,6 +17,16 @@ import type {
 export const MAX_CSV_BYTES = 5 * 1024 * 1024;
 export const EXAMPLE_CSV_PATH = 'examples/plant-growth.csv';
 export const EXAMPLE_CSV_NAME = 'plant-growth.csv';
+export const BASELINE_EXAMPLE_CSV_PATH = 'examples/baseline-demo.csv';
+export const BASELINE_EXAMPLE_CSV_NAME = 'baseline-demo.csv';
+
+/** 内置示例数据来源键：植物生长（通用演示）与非零基线（Day 7 图表表达风险演示，A=96/B=98 合成数据）。 */
+export type ExampleCsvKey = 'plant' | 'baseline';
+
+const EXAMPLE_CSV_FILES: Record<ExampleCsvKey, { path: string; name: string }> = {
+  plant: { path: EXAMPLE_CSV_PATH, name: EXAMPLE_CSV_NAME },
+  baseline: { path: BASELINE_EXAMPLE_CSV_PATH, name: BASELINE_EXAMPLE_CSV_NAME },
+};
 /**
  * 每种来源（Papa Parse / 自建结构检查）最多逐条列出的问题条数。
  * 出错十几万行的文件里，逐条建对象与逐条换算行号的成本远大于「前若干条样本 + 真实计数」，
@@ -678,10 +688,11 @@ export async function readCsvFile(file: File): Promise<ParseOutcome> {
   });
 }
 
-export async function loadExampleCsv(): Promise<ParseOutcome> {
+export async function loadExampleCsv(key: ExampleCsvKey = 'plant'): Promise<ParseOutcome> {
+  const { path, name } = EXAMPLE_CSV_FILES[key];
   let response: Response;
   try {
-    response = await fetch(`/${EXAMPLE_CSV_PATH}`);
+    response = await fetch(`/${path}`);
   } catch (cause) {
     const detail = cause instanceof Error ? cause.message : String(cause);
     return fail('read-failed', `内置示例数据加载失败：${detail}`);
@@ -700,7 +711,7 @@ export async function loadExampleCsv(): Promise<ParseOutcome> {
   }
 
   return parseCsvText(text, {
-    fileName: EXAMPLE_CSV_NAME,
+    fileName: name,
     source: 'example',
     sizeBytes: byteLengthOf(text),
   });

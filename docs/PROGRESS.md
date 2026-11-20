@@ -3,6 +3,565 @@
 赛道：2026 Qoder 高校创造力大赛 · StudyHack　　周期：14 天　　开发者：单人
 
 ---
+## 最终收尾（2026-11-20）：全流程回归、UI/UX 打磨与发布前验收
+
+唯一目标：把已有功能验收成可发布的稳定版本——不新增功能、不加后端 / 数据库 / AI API、不重构稳定模块、不提交 Git、不发布站点。本轮做了 ① 真实浏览器 10 步全流程回归 ② 界面与文案的最终打磨 ③ 数据与导出核查 ④ 工程与性能核查 ⑤ 文档与验收清单对齐。
+
+### 验收方式（本轮起有真实像素证据）
+
+- 被测：本机 `npm run dev`（端口 5199）；浏览器：**本机 Chrome 158.0.8127.37 headless + 原生 CDP**（脚本放在仓库外临时目录，未给项目增加任何测试依赖）。
+- 用到的 CDP 能力：真实视口仿真（375 / 768 / 1280 / 1440）、`Page.captureScreenshot`、`DOM.setFileInputFiles` 真实上传、`Browser.setDownloadBehavior` 真实下载后检查文件内容、`Log.entryAdded` + `Runtime.exceptionThrown` 收集控制台。
+- 5 段流程脚本（flow1～flow5）+ 4 个定点探针，全部重跑于本轮代码改动之后；证据归档到 `docs/evidence/final-20261120/`（8 张截图 + 2 份真实导出的报告）。
+- 详细逐项结论见 `docs/ACCEPTANCE.md` 第 12 节。
+
+### 回归结果：没有发现需要改动核心算法的功能性 Bug
+
+- 数据完整性：同一文件两次上传，四项统计与前 4 行逐字一致；全程无写回路径。
+- 计数自洽：`conflicts.csv` 原始 122 / 有效 118 / 缺失排除 2 / 类型排除 2 / 实绘 100 / 触顶未显示 18，五类互斥。
+- 负值保护：起点 `0` / `-4.1` / `13.14` 一律拒绝并解释「会被裁到坐标轴以下看不见」，`-4.2` 应用但提示「等于最小值的柱子退化为长度 0」，`-10` 正常。
+- 修复闭环：手动 95 → 「建议核查」→ 一键修复 → 前后双图（443×320 均有墨）→ 差异表写明「手动 95 → 自动范围」「原始数据未修改」→ 撤销恢复 `yRaw=95` 与风险诊断；连续 3 轮稳定。
+- 失效判定：改聚合与改标题 / 单位分别给出不同的诚实失效理由，撤销按钮同步消失。
+- 准入隔离：`blocked-quote.csv` / `degraded.csv` 质量统计 0 张卡、图表被拦、`echartsInstances=0`、PNG 禁用并说明原因、报告仍可导出且标注非正式结论（正文 4×「本节未执行」）。
+- 资源与性能：反复切文件 / 切图表类型后实例计数 0→1→1、清结果后归 0，无泄漏；12,000 行文件从选中到首屏实测 447 ms，DOM 恒 50 行、整页元素 720～731、longtask 0。
+- 导出：PNG 实测 1920×1080（960×540 @2x，既定规格），柱状图 97,132 B / 折线图 125,480 B；报告 7 章齐全、第 1 章即声明内置合成示例数据。
+- 控制台：全部流程 `Runtime.exceptionThrown` 与 error / warning 均为 0。
+- 响应式：375 / 768 / 1280 / 1440 四个宽度都无页面级横向溢出（`scrollWidth == innerWidth`，仅差滚动条），无越界元素、无空白图表、无小于 24 px 的按钮。
+
+### 修改文件列表（本轮）
+
+- `src/components/HeroPanel.tsx`：副标题从 Day 1 口径改写为覆盖质检 / 图表 / 导出主线的准确描述；新增四张「已实现能力」卡片；保留被验收清单钉住的主标题 `实验数据，先看清，再分析。` 与 StudyHack 眉标。
+- `src/components/ProductNotes.tsx`：把 620 字的「当前版本范围」整段换成「当前版本已覆盖（7 条）/ 尚未实现，界面上也没有入口（5 条）」双栏清单；三张价值卡文案与现状对齐；保留「未发现风险 ≠ 结论正确」与准入阻止的边界说明。
+- `src/App.tsx`：页脚由与 ProductNotes 重复的 388 字能力清单压缩为三句（本地处理 / 指向范围说明 / 合成数据声明）；`scroll-mt-24` 定位锚点未动（`App.test.tsx` 依赖）。
+- `src/components/DataQualityPanel.tsx`：判定口径说明里过期的「跨行定位与高亮在后续版本提供，本期只给数据行序号文本」改为按现状描述；类型冲突候选列表补一句「点击可在下方表格中定位并高亮该单元格」；类型冲突段末尾的「本期只报告…」改为「系统只报告…」。
+- `src/components/ChartLab.tsx`：原始记录口径说明去掉界面里泄漏的内部迭代编号「（Day 5 默认行为）」。
+- `index.html`：`<meta name="description">` 停留在 Day 1 的「完成解析与预览，为后续数据质检和图表诊断做准备」，改为按当前能力描述（质检 / 图表 / 零基线检查 / PNG 与 Markdown 导出 / 不上传不注册不调外部接口）；`dist/index.html` 相应从 0.69 kB 变为 0.80 kB。
+- `README.md`：开头长段改为四条主线 + 未开发项；补 `baseline-demo.csv` 说明与「数据处理与分析限制」小节；示例条目补两个内置数据集。
+- `docs/ACCEPTANCE.md`：版本头改 v1.0-rc；第 1 节自动化数字换成 2026-11-20 实测（含逐文件用例分布）；已知限制 21 更正；新增第 12 节（全流程逐项结果、重点验证结论、界面改动与未改动理由、响应式 / 可访问性实测、本轮修复清单、仍需人工确认）。
+- `docs/ARCHITECTURE.md`：版本头 v0.4 → v1.0；目录树补 `examples/baseline-demo.csv`；`reportExport.test` 29 → 35、`chartExport.test` 20 → 22；示例加载流程改为参数化 `loadExampleCsv(key)`；产物清单补 `baseline-demo.csv` 与 `favicon.svg`；F5/F6 行末「报告导出仍未实现」更正为已在 Day 9 落地。
+- `docs/PROGRESS.md`：本节。
+- `docs/evidence/final-20261120/`：新增本轮真实像素证据与两份导出报告。
+
+### 刻意不改的三项（附理由）
+
+- 页面容器宽度保持统一 `max-w-6xl`：图表区已经是整块容器宽度（1280 / 1440 下画布 978×420），单独把工作台改成 `max-w-7xl` 会让首页 / 上传区与工作区宽度不一致，收益不足以抵消观感割裂。
+- 散点图未选齐字段时标题写「（未选择字段）」：这是刻意设计（不编好看的标题），并有 `chartConfig.test.ts:58-59` 钉住。
+- 不做代码分割 / 懒加载：JS 888.09 kB（gzip 290.10 kB）主要是按需注册后的 ECharts，`echartsCore.ts` 已只注册 Bar / Line / Scatter + Grid / Tooltip / Title + CanvasRenderer；进一步拆分要动 `App` / `ChartLab` 的既有测试与准入闸门，属于「为省几十 KB 引入不稳定性」。
+
+### 测试命令与实际结果
+
+| 命令 | 实际结果 |
+| --- | --- |
+| `npm run lint` | `Found 0 warnings and 0 errors.`（49 文件 / 116 规则 / 113 ms） |
+| `npm test` | `Test Files 18 passed (18)`、`Tests 701 passed (701)`，约 18.7 s；未删除、未放宽任何用例 |
+| `npm run build` | `tsc -b` + `✓ built in 705ms`，595 模块；`index.html 0.80 kB`、CSS 26.23 kB（gzip 5.91）、JS 888.09 kB（gzip 290.10）；`dist/examples/` 两份 CSV 与 `dist/favicon.svg` 在位 |
+| 浏览器回归 | flow1～flow5 + 4 个探针全部重跑通过，控制台异常 0 |
+
+### 已知问题 / 待办
+
+- 未提交 Git、未推送、未发布站点：等待你授权（`dist/` 已可直接静态部署，Qoder Sites 描述文件在仓库根目录）。
+- 仍需人工确认：常用前台浏览器（Chrome / Edge 正式版）肉眼过一遍首页与工作台排版；两份归档报告与 Day 9 被阻止报告的措辞通读。
+- 本轮按任务书要求不启动下一阶段、不排 Day N；等待 ChatGPT 最终代码审查。
+
+---
+## Day 9 最终整改（2026-11-19）：质量准入失败时的报告隔离
+
+唯一目标：修掉 Day 9 审查抓到的一个 P0 可信性缺陷——**质量准入未通过时，导出的 Markdown 报告头部声明「不提供正式结论」，正文却仍把图表配置、有效记录统计与零基线诊断原样写进去**，自相矛盾。本轮只做这一件事，不提前开发 Day 10，不加功能、不改原始 CSV、不重构 ECharts、未提交 Git、未推送、未发布站点。
+
+根因：`buildMarkdownReport()` 只在首段拼了一句「本次未输出数据质量统计」的免责声明，第 3～6 节仍直接消费调用方传入的 `input.chart` / `input.repair`；隔离只挡在 React 层，纯函数本身不设防，任何人绕过 UI 直接调它都会拿到「非正式横幅 + 正式正文」的矛盾报告。
+
+### 修改文件列表
+
+- `src/lib/reportExport.ts`：把准入闸门下沉进报告纯函数本身。新增导出常量 `ADMISSION_BLOCKED_HEADLINE`（非正式结论横幅）与 `ADMISSION_BLOCKED_SECTION_NOTE`（「未执行」不等于「检查通过」，也不等于「没有问题」）；以单一 `allowed = input.admission.allowed` 驱动——`sectionQuality` / `sectionChartConfig` / `sectionRecords` / `sectionDiagnostic` / `sectionRepair` / `sectionBoundary` 各加 `!allowed` 分支，只写「本节未执行 / 正式结果未输出」并声明「即使调用方传入了配置／诊断／修复记录也不复述」，第 1 节保留真实解析状态、结构降级依据与逐条阻止依据，第 7 节说明分析边界。关键：即使传入非空 `chart` / `repair` / `quality`，纯函数自行遵守准入规则，不依赖 React UI。
+- `src/components/ChartLab.tsx`：调用层同步设防——`reportChart` 与 `reportContext.repair` 在 `admission.allowed` 为假时一律传 `null`，不把未经信任的图表分析作为正式报告输入；PNG 禁用逻辑（`renderChart` / `evaluateChartExport` / `pngContext`）一字未改。留证报告仍可导出。
+- `src/lib/chartExport.ts`：`describeExportTarget` 在未通过准入时返回统一的 `ADMISSION_BLOCKED_CAPTION`（PNG 已禁用、Markdown 仍可留证、正文非正式、修好文件后重传），去掉尾部拼接的旧 `admissionNote`；`evaluateChartExport` 未动。
+- `src/components/ChartExportPanel.tsx`：新增必填 `admissionAllowed` prop，导出提示段按准入状态分叉，与报告文案、下载面板说明口径一致。
+
+测试（只增不减，原有断言一条未放宽）：
+
+- `src/lib/reportExport.test.ts` 29 → 35（新增 R1–R6）：缺列 CSV 被阻止但有 ≥3 条有效数值记录且诊断仍为 `risk`；引号未闭合导致 `structureState==='sound'` 但仅 `MissingQuotes` 也被阻止；对抗性注入非空 `quality`/`chart`/`repair`（借一份真实修复记录）后 `buildMarkdownReport()` 仍第 2–6 节全「未执行」、不含任何正式表行；七标题齐全且各节带 NOTE；正常 CSV 仍输出完整正式报告；确定性与不泄漏原始行。
+- `src/lib/chartExport.test.ts` 20 → 22：被阻止时装配出的报告只留证（活态数据 `chart` 非空且诊断 `risk`，但产物不含 `| 图表类型 |`、`| 检查状态 |`、状态码）；被阻止说明文字与报告口径一致。
+- `src/components/ChartLab.test.tsx` 135 → 141：`downloadStub` 扩展为同时捕获 Blob（加法，不改既有用例）；新增缺列结构留证报告端到端（`| 数据质量准入 | 未通过 |`、4×「本节**未执行**」、0 个正式标记、回显「Markdown 报告已导出」证明未抛异常）、未闭合引号案例、正常演示（PNG + 2 次下载、7 节、`| 图表类型 | 柱状图 |`、`96 – 98`、`状态码 clear`）、风险→修复→撤销仍在正式报告记录、下载面板提示/说明在两种状态下一致、只读 CSV 行一字未改。
+
+### 回归证明（两次破坏性验证，均已恢复）
+
+1. 把五处 section 调用里的 `allowed` 改成 `true`，恰好 5 个新增纯函数/装配测试失败（R1–R4 + chartExport 装配），改回即绿。
+2. 用 `cp` 备份后撤掉 ChartLab 的图表闸门与报告闸门（还原到原缺陷态），2 个被阻止的 ChartLab 集成用例失败、4 个准入通过态用例仍绿；随后从备份恢复两道闸门并复核 `ChartLab.tsx:434-448`、`reportExport.ts:838-842` 已重新设防。
+
+### 工程验证（本轮真实结果）
+
+- `npm run lint`：`Found 0 warnings and 0 errors.`（49 文件 / 116 规则 / 45 ms）。
+- `npm test`：`Test Files 18 passed (18)`，`Tests 701 passed (701)`；其中 reportExport 35、chartExport 22、ChartLab 141、DataPreview 46。基线 687 项全保留，本轮净增 14 项。
+- `npm run build`：`tsc -b` 通过，`✓ built in 347ms`，`dist/index.html 0.69 kB`、`dist/assets/index-DL5aUXPz.css 26.05 kB (gzip 5.88)`、`dist/assets/index-SEWiun5Y.js 886.68 kB (gzip 289.92)`；仅既有的 >500 kB 分包提示（Day 5 起就有，非本轮引入）。
+
+### 真实浏览器验收（内置 Chromium，dev server `http://localhost:5188/`，真实 `upload_file` + 真实点击下载）
+
+- **正常 CSV** `group,value / A,96 / B,98 / C,97`：解析 3×2、准入通过；点「导出当前图表 PNG」→ 落盘 `image/png`、IHDR **1920×1080**、76,393 B；点「导出 Markdown 报告」→ 8,163 B、七个章节齐全，含 `| 图表类型 | 柱状图 |`、`| 检查状态 | 未发现风险（状态码 clear） |`、`| 进入图表的 Y 数值范围 | 96 – 98 |`。
+- **结构错误 CSV** `group,value / A,96 / B,98 / C,97 / D`（末行缺列）：页面显示「4 行 2 列，1 条格式问题、1 条说明提示」「这份 CSV 暂时不能生成正式图表」；PNG 按钮 `disabled`（原因为准入未通过），Markdown 按钮可用；导出的报告 7,536 B，程序化核对：7 个 `## ` 标题、4 处「本节**未执行**」、5 处「未执行不等于检查通过」NOTE、`数据质量准入 | 未通过`，且 `| 图表类型 |`／`| 检查状态 |`／`状态码`／`分组摘要`／`96`／`98`／`97` 等正式标记**全部为 0**；报告首段为 **⚠ 非正式结论** 横幅、第 1 节含真实结构降级依据与 2 条阻止依据。
+- **无 JavaScript 异常**：全程 `window.onerror` / `unhandledrejection` 记录为 0；控制台 `error`+`warn` 查询 `<no console messages found>`。
+- **证据归档**：下载落在 `C:\Users\zxcvb\Downloads\`（4 个 UUID `.tmp`，大小与内存 Blob 逐一相符），已 `cp` 进 `docs/evidence/day9-browser/`（`normal-chart.png` / `normal-report.md` / `broken-structure-report.md`）并 `cmp` 校验字节一致、PNG 签名 `[137,80,78,71,13,10,26,10]` 有效；未删除你下载夹里的任何文件。
+
+### 已知问题与限制
+
+- 视口仍为内置浏览器隐藏态，375／1280／1440 视觉与响应式未肉眼验证（沿袭 Day 9 主体记录）。
+- 引号未闭合（`structureState==='sound'` 仅 `MissingQuotes`）与缺列（`degraded`）两条阻止路径都由单元/集成测试覆盖；浏览器实测走的是缺列路径。
+
+### 是否需要人工验收
+
+建议但非阻塞。核心缺陷已在纯函数层设防并经真实浏览器复核；可用本机 Chrome/Edge 前台窗口肉眼看一眼被阻止报告的措辞与正常 PNG 观感。
+
+### 下一步（未开工，等你确认）
+
+Day 9 整改到此停止，等待最终审查。未提交 Git、未推送、未发布；Day 10 内容需你另行授权。
+
+---
+## Day 9（2026-11-19）：PNG 图表导出 + Markdown 可复核报告
+
+唯一目标：把 Day 1–8 已经跑通的「导入 CSV → 看质量 → 画图 → 诊断 → 修复 → 前后对比」收在最后一个真实动作上——**把屏幕上这张图导出成 PNG，把这次分析的证据导出成 Markdown 报告**。全程浏览器本地完成：不上传、不登录、不调外部 API、不接大模型、不引截图库；本轮不做 IQR 异常值、不加新风险规则、不做 PDF / Word / Excel、不改原始数据、未提交 Git、未推送、未发布站点。
+
+开工前置检查：Day 8 闭环在工作区完整（`git log` 停在 `98560d6`，起始基线 14 个测试文件 / 576 项测试全绿），`docs/ACCEPTANCE.md` 第 3 节的 375／1280／1440 视觉项仍标注待人工确认。
+
+### 修改文件列表
+
+新增（5 个模块 + 4 个配套测试）：
+
+- `src/lib/fileDownload.ts` / `fileDownload.test.ts`（18 项）：`saveFile()` 用 Blob + Object URL 触发 `<a download>`，点击后延迟 4 秒回收 URL；`buildExportFileName()` 把来源文件名压成安全片段（取末段路径、去扩展名、非「文字/数字/_/-」一律换 `_`、折叠与裁边、命中 Windows 保留名加 `fig-` 前缀、按码点截断 40）。
+- `src/lib/chartPngExport.ts` / `chartPngExport.test.ts`（24 项）：`buildPngExportOption()` 只在屏幕 option 之上加表达配置（`animation:false`、白底、把 HTML 标题画进画布、按标题长度抬高 `grid.top`），数据、轴配置与 `yAxis.min` 逐字不动；`exportChartPng()` 建一个有真实像素尺寸（960×540）且 `position:fixed` 的离屏容器 → `setOption(option, true)` → `getZr().flush()` → 等帧 → `getDataURL({type:'png', pixelRatio:2, backgroundColor:'#ffffff'})` → 解码校验确实是 PNG → 交给 `saveFile()`，成功与失败都 `dispose()` 并移除临时 DOM。
+- `src/lib/reportExport.ts` / `reportExport.test.ts`（29 项）：七段式报告纯文本装配 + Markdown 转义 + 报告文件名。
+- `src/lib/chartExport.ts` / `chartExport.test.ts`（20 项）：把「能不能导出、导出的是哪张、点了交给谁」收敛成可测纯函数（`evaluateChartExport`、`describeExportTarget`、`buildPngRequest`、`buildReportChartContext`、`runPngExport`、`runReportExport`、`errorText`）。
+- `src/components/ChartExportPanel.tsx`：只渲染与转发，不做任何统计。
+
+修改：
+
+- `src/lib/echartsCore.ts`：按需注册补 `TitleComponent`（PNG 需要把标题画进画布）。
+- `src/components/ChartLab.tsx`：把当次渲染的 `option`、生效标题、`ChartDataResult` 计数器、`BaselineDiagnostic`、`ChartRepairRecord`、准入与质量结果原样交给导出层；新增 `displayedRecordsCount` 与展示上限触顶数。
+- `src/components/ChartLab.test.tsx`：Day 9 由 18 项增至 20 项（本轮补的两条回归测试），既有用例一项未删、未放宽。
+- `src/components/ChartExportPanel.tsx`：本轮抓到并修掉上述两个缺陷（补 `runningRef` 重置、拆开两个 `aria-describedby` 目标）。
+- 页面与文档文案同步（去掉「报告导出尚未实现」的过期声明）：`src/components/ProductNotes.tsx`（当前版本范围段）、`src/App.tsx`（页脚能力清单）、`README.md`（版本号 Day 6 → Day 9、能做什么清单、`echartsCore` 模块列表、目录结构说明）、`docs/PRD.md`（F7 状态改为「已完成 V1」）、`docs/ARCHITECTURE.md`（目录结构 + 依赖方向 + 第 6 节新增「成果导出」步骤）、`docs/ACCEPTANCE.md`（新增第 11 节 Day 9 验收）。
+- 本轮还顺带修掉了 `chartRepair.test.ts` 里一处会随机数失败的历史用例（11 月某月第 30 天并不存在），未动其它稳定模块。
+
+### 关键设计决定
+
+- **屏幕即导出**：PNG 用的就是 `ChartCanvas` 当前那份 option 对象引用，不重新计算统计、不重新推类型、不重新聚合；Markdown 用的同样是这次渲染的 `ChartDataResult` / `BaselineDiagnostic` / `ChartRepairRecord`。因此「改字段／改轴／修复／撤销之后再导出」与「先导出」在配置完全相同时产物一致。
+- **报告不允许出现示例值**：正文所有数字都从传入对象取，测试用 `expect(markdown).not.toContain('height_cm')` 一类断言把 A=96／B=98 这类写死内容挡在门外。
+- **准入被阻止时报告仍可导出**：它记录的正是「为什么不能给结论」，正文首行加 **⚠ 非正式结论** 横幅并明确声明不输出质量统计与风险结论；PNG 则禁用，因为可能被误读的图不该外流。
+- **修复记录只在存在有效 `ChartRepairRecord` 时输出**，并把「修复前真实纵轴下界」取自当时真正写进 `yAxis.min` 的值，而不是输入框原文；自动范围一律写成「不固定纵轴下界，由坐标轴自动包含 0」，绝不写成「下界恰好为 0」。
+- **单位未填写就保持未填写**，不自动补测得单位；均值必须给每组样本数 n 与原始值列表，求和必须标成「用户选择的聚合口径」而不是数据总量；折线图必须交代按 X 轴日期升序绘制、缺失或非法日期不画且不插值。
+
+### 本轮浏览器实测抓到的两个真实缺陷（已修 + 已补回归测试）
+
+1. **报告导出后两个按钮永久失效**。`handleReportExport()` 置 `runningRef.current = true` 后，`finally` 里只 `setPhase('idle')`，漏了 `runningRef.current = false`；于是第一次导出 Markdown 之后，同一挂载内的所有后续导出点击都被 `runningRef.current` 挡掉——按钮看着可点、`aria-busy=false`，但什么都不发生，界面停在上一条成功回显上。修复：补 `runningRef.current = false`。回归测试 `报告导出后按钮仍可再次触发：报告 → PNG → 报告 三次点击都落文件` 断言 3 个下载名字依次为 `.md/.png/.md`；把这行改回去跑该用例，实测失败（`AssertionError: expected 1 to be greater than 1`），改回来通过——确认它真能挡住这个 bug，而不是碰巧绿。
+2. **`aria-describedby="export-report-hint"` 指向不存在的 id**。原来整个提示块只有一个 `id="export-png-hint"` 的外层 `div`，报告按钮的 IDREF 悬空。修复：把 id 分别落到 PNG 说明段与 Markdown 说明段上，两条说明各自可被引用。回归测试 `两个导出按钮的 aria-describedby 都指向真实存在的说明文本` 逐个解析 id 并断言目标存在且文本非空。
+
+### 测试（576 → 687，新增 111 项，未删除或弱化任何既有用例）
+
+- Day 9 新模块 91 项：`fileDownload` 18 + `chartPngExport` 24 + `reportExport` 29 + `chartExport` 20。
+- `ChartLab.test.tsx` Day 9 块 20 项：禁用态与原因、说明文字与屏幕口径一致、PNG 请求装配、离屏实例生命周期、柱／散／折三种当前画面导出的 option 与轴配置一致性、下载名与体积回显、失败只给中文说明、连点不重复起实例、反复导出实例全部销毁、`aria-describedby` 完整性、导出前后 `CsvTable.rows` 与画面统计一字不差。
+- 后台页面相关：`requestAnimationFrame` 不触发时靠每帧 60ms 超时兜底仍完成导出；页面 `visibilityState === 'hidden'` 时跳过等帧立刻取图，导出既不挂起也不漏 `dispose`。
+- 回归：Day 1–8 的 576 项（解析、列语义、质量、准入、图表、配置、轴起点与裁剪保护、诊断、修复闭环）全部仍绿。
+
+### 工程验证（真实结果）
+
+- `npm run lint`：`Found 0 warnings and 0 errors.`（49 文件 / 116 规则）
+- `npm test`：`Test Files 18 passed (18)`，`Tests 687 passed (687)`
+- `npm run build`：`tsc -b` 通过，`✓ built in 373ms`，`dist/index.html 0.69 kB`、`CSS 26.05 kB (gzip 5.88)`、`JS 881.94 kB (gzip 288.51)`；仍有既有的 >500 kB 分包提示（Day 5 起就有，非本轮引入）。
+
+### 真实浏览器验收（内置浏览器 `http://localhost:5175/`，隐藏视口，`evaluate_script` 派发真实 DOM 事件）
+
+- **导出真的落盘**：`C:\Users\zxcvb\Downloads` 现有 14 个 `figureguard-*` 文件，PNG 与 `.md` 都在。磁盘上的 PNG 字节数与内存 Blob 一致（`figureguard-chart-dose-response-20261119-120142.png` 117,430 B、`figureguard-chart-baseline-demo-20261119-120105.png` 75,141 B），IHDR 均为 1920×1080，签名 `[137,80,78,71,13,10,26,10]`；`.md` 无 BOM（首三字节 `35 32 70`）、`toString('utf8')` 无 U+FFFD 替换字符，中文正常。
+- **导出跟随屏幕配置**（同一份 3 条演示数据，只改纵轴起点）：自动范围 76,393 B／墨迹占比 0.4653；手动 95（风险态）80,174 B／0.3249；点「一键恢复零基线」后再次导出 76,393 B／0.4653，与自动那次**同尺寸同哈希**——证明 PNG 用的是当前生效轴配置，也证明修复确实把轴恢复到自动态。
+- **标题画进画布**：把标题改成「处理组实测高度对比」后导出 75,141 B，顶部 90 px 带内非白像素 7,007（页面里的 HTML 标题不会进 `getDataURL`，这是标题真被画出来的证据）。
+- **散点／折线同样可导**：`dose-response.csv` 散点 80,077 B／墨迹 0.0272，折线 117,430 B／0.0308（点数少、画布大，占比低是真实形状），说明文字与屏幕一致（「X 轴「dose」→ Y 轴「response」· 原始记录 · 实际绘制 4 个数据点」）。
+- **报告内容来自当次计算**：风险态 8,388 B（3,662 字符）里 `| 纵轴起点 | 手动 95（该值已真正写进 ECharts 的 yAxis.min，是画布实际使用的下界） |`、`| 检查状态 | 建议核查（状态码 risk） |`；点修复后 9,597 B，`## 6. 图表修复记录` 出现 `修复前真实纵轴下界 | 95`、前后配置差异表与「修复后重新计算的诊断状态：未发现风险（状态码 clear）」；全文不含 `height_cm`／`stem_count`。
+- **准入被阻止的 CSV**（`恶意 结构#错位.csv`）：PNG 按钮 `disabled`，原因写明「数据质量准入未通过…此时不导出可能被误读的图表」；同帧各点一次只有 1 个下载（报告）；报告首段 **⚠ 非正式结论** 且正文声明「本次未输出数据质量统计」；文件名 sanitize 为 `figureguard-report-恶意_结构_错位-…md`，报告内表格写作 `「恶意 结构\#错位.csv」`（`#` 已转义）。
+- **只导出一次、不泄漏**：连点 3 次同帧只起 1 个离屏实例；导出结束后 `document.querySelectorAll('[data-testid="chart-png-export-host"]')` 与 `a[download]` 均为 0；主图实例从未被 `dispose`。
+- **无障碍与反馈**：两个按钮可访问名固定为「导出当前图表 PNG」「导出 Markdown 报告」，进度只写在 `role=status` 的回显里；被阻止时 `role=alert` 且 `aria-live=assertive`；`aria-describedby` 两条 IDREF 均可解析；区域 `aria-label="导出分析成果"`。
+- **控制台**：`types:[error]` 查询为 0 条；仅有关于图表测量尺寸为 0 的既有 warn（隐藏视口所致，非导出路径）。
+
+### 已知问题与限制
+
+- **375／1280／1440 px 的视觉与响应式仍未真验**：内置浏览器视口 `0×0`、`take_screenshot` 与 `resize` 都不可用，只能确认导出面板沿用了 Day 5–8 已验收的 `min-w-0`／`flex-wrap`／`break-words` 类结构与 DOM 状态，不能替代肉眼检查。
+- **PNG 清晰度靠像素统计而非肉眼**：已验证尺寸（1920×1080）、白底、2 倍像素比、墨迹分布与标题带，但插进幻灯片的实际观感需你人工看。
+- **报告不内嵌图片**：P0 只要求报告交代导出配置并提示把 PNG 一起归档，因此正文只有「建议与 PNG 一同归档」。
+- **P1「前后对比两张图各导一张」本轮未实现**（属可选增强，且当前 `runningRef` 互斥锁一次只允许一个导出）。
+- 开发服务器端口：本轮用 `:5175`，`:5173`／`:5174` 上仍有既有 dev server 在监听，未动。
+- 演示数据输入框对超长标题的截断行为未单独验证：`buildPngExportOption()` 会按标题长度抬高绘图区上边界（单测覆盖），但真实浏览器里长标题的换行观感没截到图。
+
+### 是否需要人工验收
+
+需要。请用本机 Chrome/Edge 前台窗口确认：① 三次导出（自动／手动 95／修复后）的 PNG 观感与清晰度；② 报告在 VS Code 或 GitHub 里渲染的表格是否不破版；③ 375／1280／1440 三档宽度下导出区不挤压、不换行错位；④ 键盘 Tab 能到达两个按钮且 Enter 生效。
+
+### 下一步（未开工，等你确认）
+
+Day 9 到此停止，等待 ChatGPT 代码审查与人工验收。候选：把 Day 8 前后对比的两张图各导一张（P1）、报告内嵌 PNG 的 base64 或本地引用、把误差棒／异常值列为独立议题（均需新授权，不属本轮范围）。
+
+---
+## Day 8（2026-11-19）：风险诊断 → 一键修复 → 前后对比 → 撤销
+
+唯一目标：把 Day 7 已经落地的「柱状图非零基线」诊断接上一条真实可走的交互闭环——发现风险 → 一键修复 → 两张真实 ECharts 前后对比 → 说明改了什么 → 单步撤销。本轮不做 PNG / Markdown / PDF 导出，不加新风险规则，不做异常值检测，不建通用多级历史，不接后端与数据库，未提交 Git、未推送、未发布站点。
+
+开工前置检查：Day 7 的纵轴部分裁剪保护（`resolveYAxisStart()` 三段判定 + `notice`）确认已在工作区（`git log` 停在 `98560d6`，Day 7 改动尚未提交但文件齐全，起始基线 14 文件 / 501 项测试全绿），因此允许进入 Day 8。
+
+### 修改文件列表
+
+| 文件 | 变化 |
+| --- | --- |
+| `src/lib/chartRepair.ts` | 新增（346 行）：修复资格判定、修复记录构造、失效判定、撤销安全检查、配置差异与说明文案，全部是纯函数 |
+| `src/lib/chartRepair.test.ts` | 新增（422 行 / 38 项）：六门条件、前后快照、失效边界、撤销安全、差异文案 |
+| `src/components/ChartRepairPanel.tsx` | 新增（132 行）：修复完成状态、并排两张真实 ECharts、「本次修复修改了什么？」、撤销按钮 |
+| `src/components/ChartLab.tsx` | 图表表达检查面板内加修复按钮（含不可修复原因）；新增 `repair` / `repairNote` 状态、渲染期失效清除、`handleRepair` / `handleUndoRepair`；挂载对比面板 |
+| `src/components/ChartLab.test.tsx` | 79 → 115 项（Day 8 新增 36 项 A–E 组）；ECharts mock 改为记录每个实例的容器，便于按无障碍名定位「修复前 / 修复后」两个实例 |
+| `src/lib/chartData.ts` | 一行：`barOption` 纵轴 `nameGap` 26 → 46，修掉浏览器实测到的轴名压住小数刻度（96.5）的真实重叠 |
+| `src/lib/chartData.test.ts` | 107 → 108 项（断言 `nameGap >= 40`） |
+| `src/components/DataPreview.tsx` | 内置 `baseline-demo.csv` 时改说合成演示数据（A=96 / B=98 / C=97），并声明修复不改动任何单元格与行号 |
+| `src/components/ProductNotes.tsx` | 能力范围文案改为「一键修复、前后对比与撤销已实现」，导出与异常值标注仍明确未实现 |
+| `src/App.tsx` | 页脚补修复与撤销说明，并把两份示例数据都标注为合成演示数据 |
+| `docs/screenshots/` | 新增 2 张真实浏览器截图（前后对比整页 + 修复前图表含悬浮提示） |
+
+`src/types/chart.ts`、`chartConfig.ts`、`chartDiagnostics.ts`、`chartData.ts` 的聚合与统计、`csv.ts`、`dataQuality.ts`、`columnTypes.ts` 的判定逻辑本轮一字未改；`BASELINE_RULE_ID` / `BASELINE_CONFIG_SOURCE` / `diagnoseBaseline()` / `resolveYAxisStart()` / `toEChartsOption()` / `defaultChartConfig()` / `resolveChartTitles()` 全部复用，没有新建第二套诊断。
+
+### 修复到底改了什么
+
+修复只做一件事：把 `config.yAxisStart` 换成 `{ mode: 'auto', raw: '' }`，然后走 Day 7 那条唯一真值链路重新算一遍——`resolveYAxisStart()` → `appliedMin` → `toEChartsOption(..., { yMin })` → `diagnoseBaseline()`。因此「恢复零基线」不等于把下界写死成 0：修复后 option 里连 `min` 键都不出现，由 ECharts 自己出包含 0 的自动范围，含负值的数据同样不会被裁。CSV 行、字段选择、聚合口径、记录计数与百分比全程不参与，`updateRows` 一个引用都没传进修复模块。
+
+按钮启用条件六道门全部读运行时真实值，缺一不可：`kind === 'bar'`、`admission.allowed`、`result.validCount > 0`、`diagnostic.status === 'risk'`、`diagnostic.ruleId === 'bar-zero-baseline'`、`diagnostic.axisStart.appliedMin !== null && appliedMin > 0`。最后一条读的是生效下界而不是输入框文本，所以填 0 / 负数、填了但被裁剪保护拦下（`appliedMin = null`）、非柱状图、无数据、准入未通过、已解析出空集这些情况下根本没有按钮可点，也不会冒出「修复成功」；不满足时面板只讲当前状态（例如「当前生效的纵轴范围已经包含零基线，本条规则没有风险可修复」）。重复点击被两层挡住：UI 只在 `repair === null` 时给出动作，`createRepairRecord()` 内部再复核一遍资格，返回 `null` 时既不写配置也不追加记录。
+
+### 修复记录数据结构
+
+`ChartRepairRecord`（一次修复一条，钉存后不被后续渲染改写，因为配置全程不可变更新）：
+
+| 字段 | 内容 |
+| --- | --- |
+| `ruleId` / `action` / `kind` | `bar-zero-baseline` / `restore-auto-zero-baseline` / `bar` |
+| `xIndex` / `yIndex` / `xFieldLabel` / `yFieldLabel` / `aggregation` | 修复当时的字段与口径 |
+| `beforeConfig` / `afterConfig` | 两份完整 `ChartConfig` 快照 |
+| `beforeAppliedMin` | 修复前**真实生效**的数值下界（95），不是输入框字符串；`beforeAxisStart` 为完整 `ResolvedYAxisStart`，`afterAxisStart` 为修复后的解析结果 |
+| `evidence` | 原始 `BaselineDiagnostic`（status / message / summary / axisStart / detail） |
+| `context` | `table` 对象引用、`rowCount`、`yRange`、标题与轴标题、字段标签 |
+| `beforeSnapshot` / `afterSnapshot` | 修复当时的 `ChartConfigSnapshot`（标题、单位、标注） |
+| `result` | 前后共用的同一份 `ChartDataResult`（不复制第二份数据） |
+| `beforeOption` / `afterOption` | 用同一 `result` 生成的两份真实 ECharts option |
+
+数据上下文用 `CsvTable` 对象引用而不是文件名：重新加载同名 CSV 会得到新对象，旧记录当场失效，不会跨文件串联。
+
+### 失效与撤销规则
+
+渲染期一致性校验（`describeRepairStaleness`，返回中文原因后清记录并留提示）：换数据文件 / 换图表类型 / 换 X 字段 / 换 Y 字段 / 换聚合口径 / 改 Y 轴起点 / 改标题或单位——理由按这个顺序如实展示（例如「已修改分类聚合方式，柱子代表的不再是同一组数值」）。
+
+撤销是单步的：`evaluateRepairUndo` 先挡失效记录，再用当前 `yRange` 复核 `beforeConfig.yAxisStart`，解析仍报错（比如修复后换了字段，95 已越过新的数据最小值）就拒绝写回并说明原因，绝不强行应用过期配置。可撤销时直接把 `beforeConfig` 整体交回，主图、刻度与诊断全部重算——96 / 98 配 95 会重新报出风险，提示「已撤销本次修复：Y 轴起点恢复为手动 95……」。没有记录就没有撤销按钮，撤销后仍可再次修复；撤销同样不触碰 CSV、字段与聚合。本轮按任务书要求只做一条记录，没有历史栈与重做。
+
+### 科学边界（全部在 UI 与测试中固化）
+
+修复与撤销只改图表配置；`CsvTable.rows` 没有任何写路径；数值、记录数、行号、分组不变；文案统一用「已恢复包含零基线的自动纵轴范围」「原始实验数据未发生变化」「当前规则未发现非零基线风险」；不出现「科研错误已修复」「图表已经完全正确」「实验结论更可信了」；差异表明确写了自动范围不等于下界恰好为 0（要读真实刻度才能那样说）；零基线规则只在柱状图生效，散点与折线连入口都不渲染；不引入任何显著性、误差棒或因果结论；`MAX_CHART_ITEMS` 的展示上限与记录统计分离，展示被截断时记录数照常。
+
+### 测试（501 → 576，新增 75 项，未删除或弱化任何既有用例）
+
+| 组 | 覆盖 | 落点 |
+| --- | --- | --- |
+| A 修复资格与动作 | 95 可修 / 0 与负数不可修 / 填 125 被裁剪保护拦住不可修 / 输入框有正数但实际回退自动不算风险 / 状态 clear、invalid、no-data、准入拒绝、非柱状图各不重复触发 / 修复只改 `yAxisStart` / 修复后 option 无 `min` | `chartRepair` + `ChartLab` |
+| B 前后对比 | 前图保留 `min = 95`、后图自动含 0 / 点与类别数组逐位相等 / 类别顺序一致 / 悬浮提示行号与数值一致 / 两张图各自 init 与 dispose / 换 CSV、换字段、换聚合、同名重载后旧对比消失且不复活 | `chartRepair` + `ChartLab` |
+| C 撤销 | 可撤销 / 恢复手动 95 / 风险重新算出 / 撤销后再修复 / 无记录不撤销 / 拒绝过期记录 / 撤销不改数据 | `chartRepair` + `ChartLab` |
+| D 边界 | 自动范围下负值不被裁 / 聚合柱状图（10,10,20,30 → 20）修复后值与 n 不变 / 130 行时仍真实绘制 130 根柱子且 `displayedCount = 100`、`capHidden = 30` / 空数据与非柱状图无修复源 / 全列类型错误 → 准入拒绝 → 既无诊断也无修复 / 只改标题单位时数据与 option 数据段不变 / 记录上下文与当前 table 不一致时安全拒绝 | `chartRepair` + `ChartLab` |
+| E 回归与无障碍 | Day 1–7 既有用例全绿 / 风险卡含规则、说明与依据、修复按钮与理由同一区域 / 修复后状态、对比、撤销、边界说明齐全 / 修复与撤销按钮是原生 `<button>`，disabled 时不可点、可用时可聚焦 | `ChartLab` |
+
+### 工程验证（真实结果）
+
+- `npm run lint`：`Found 0 warnings and 0 errors.`（oxlint，40 文件 / 116 规则 / 14 线程）
+- `npx tsc --noEmit`：无输出（0 错误）
+- `npm test`：`Test Files 14 passed (14)`，`Tests 576 passed (576)`，Duration 13.09 s（jsdom 的 `Not implemented: getContext()` 与 `[ECharts]` 提示是 mock 环境既有噪声，非失败）
+- `npm run build`：`tsc -b && vite build` 成功，`✓ 590 modules transformed`，产物 `JS 845.30 kB │ gzip 275.85 kB`、`CSS 25.65 kB │ gzip 5.82 kB`；唯一告警是既有的「Some chunks are larger than 500 kB」，本轮未做代码分割
+- 文案与文档改动后复跑一次：lint 仍 `0 warnings / 0 errors`、`tsc --noEmit` 退出码 0、`576 passed (576)`、构建产物体积不变
+
+### 浏览器实测（本地 `http://localhost:5173/`，内置 `baseline-demo.csv`）
+
+- 手动起点 95 → 主图纵轴真实刻度 95 / 95.5 / 96 / 96.5 / 97 / 97.5 / 98，风险卡报「存在风险」；修复后主图刻度回到 0 / 20 / 40 / 60 / 80 / 100 且风险转为「未发现风险」。
+- 点击一键修复：页面上 ECharts `<canvas>` 由 1 个变 3 个（主图 + 前 + 后）；从 React fiber 取到两个真实实例的 option——修复前 `yAxis[0].min === 95`、`xAxis[0].data === [A,B,C]`、`series[0].data === [96,98,97]`，修复后 `min` 为 `undefined`、数据两列逐位相同。悬浮提示实测为「数据行号：1 / 类别：A / 数值：96」。
+- 「本次修复修改了什么？」实测七行全部来自真实配置与统计：检测规则（含 `bar-zero-baseline`）、Y 轴起点「手动 95 → 自动范围（由坐标轴自动包含 0）」、更改类型 `chartConfig.yAxisStart`、原始数据未修改、数据记录数「原始 3 条、有效 3 条（实际绘制 3 个展示单元）」、绘图方法「柱状图 · 按类别平均值」、重新检查（取当次真实诊断文本）。
+- 撤销：对比区消失、canvas 由 3 回 1、主图 `yAxis[0].min` 实测重新变成 95、单选项回到「手动设置」且输入框仍是 95，提示「已撤销本次修复：Y 轴起点恢复为手动 95……」。
+- 失效：修复后把聚合从「不聚合」切到「平均值」，对比当场清除、提示写明「已修改分类聚合方式……」（`role="status"`），canvas 从 3 回到 1，说明两个实例真的各自 dispose。
+- 数据未动：以上每一步之后表格单元格实测恒为 `1|A|96  2|B|98  3|C|97`。
+- 布局：在 375 / 1280 / 1440 三种宽度下同时渲染同一应用，对比区实测为 375 → 1 列堆叠、1280 与 1440 → `grid-template-columns: 352px 352px` 两列，画布高度统一 320 px，无横向溢出。
+- 实测发现并修掉一处真实遮挡：修复前图的小数刻度 96.5 与旋转后的纵轴名重叠（轴名 x 41–53 落在刻度框内），`nameGap` 由 26 提到 46 后轴名 x 移到 21–33、重叠计数 0、未被画布左边缘裁掉；`grid.left = 48` 未动，因此既有断言不受影响。
+- 交互与无障碍：修复 / 撤销均为原生 `<button>`；`.focus()` 后 `document.activeElement` 为按钮本身；实际加载的样式表里确有 `:focus-visible { outline: 2px solid var(--color-brand); outline-offset: 2px }` 与 `@media (prefers-reduced-motion: reduce)` 全局规则。
+- 截图：`docs/screenshots/day8-2-repair-compare-633px.png`（前后并排 + 差异表 + 撤销 + 边界说明）与 `docs/screenshots/day8-3-before-chart.png`（修复前 95–98 刻度与真实悬浮提示）。
+
+### 已知问题与限制
+
+- 截图只拿到 2 张：本会话后段桌面内置浏览器的截图通道开始返回 `NATIVE_BROWSER_VIEWPORT_UNAVAILABLE`（页面 `visibilityState=hidden`），375 / 1280 / 1440 三档布局与遮挡修复因此改用脚本量取几何数据（`getBoundingClientRect` 与 zrender 显示列表文本框）取证，没有对应截图；未执行的检查一律没写成通过。
+- `prefers-reduced-motion` 的对照实测不成立：内置浏览器本身就上报 `reduce`，三次读取的 `option.animation` 都是 `false`，只能确认 option 与全局 CSS 遵循该偏好，没能截到「动画开启」的对照组。
+- 修复记录按任务书只做一条（无历史栈、无重做），撤销不跨数据文件、不跨字段与口径变化——这是设计如此，不是缺陷。
+- 构建包体仍 > 500 kB（ECharts 全量进单 chunk），本轮按任务书不做拆分与依赖新增。
+- 演示闭环需要在页面里手动走完 13 步，未做自动化 e2e；`vitest` + jsdom 覆盖的是逻辑与 DOM 状态，真实刻度像素仍以人工验收为准。
+
+### 下一步
+
+等待 ChatGPT 源码审查与人工验收。之后的候选：报告导出（PNG / Markdown / PDF）、异常值标注（只标注不删除）、散点与折线的其他表达检查、以及按审查结论决定是否补布局快照测试。
+
+---
+## Day 7 最终整改（2026-11-19）：纵轴部分裁剪保护（P0）
+
+唯一目标：修掉代码审查发现的那一处 P0——`resolveYAxisStart()` 只拦「起点 ≥ 数据最大值」，拦不住「起点落在数据最小值与最大值之间」的部分裁剪。本轮不动 Day 8 的任何内容：不实现一键修复、不做前后对比与撤销、不做导出，不新建第二套诊断规则。本轮未提交 Git、未推送、未发布站点。
+
+### 问题根因
+
+原实现只有一条范围判定：
+
+```ts
+if (yRange !== null && parsed >= yRange.max) { /* 阻止 */ }
+```
+
+因此三类会藏掉有效数值的配置被放行，并且被诊断说成「未发现风险」：
+
+| 数据范围 | 手动起点 | 原结果 | 实际问题 |
+| --- | --- | --- | --- |
+| 96 – 98 | 97 | 应用，`min = 97` | 96 这根柱子被裁到坐标轴以下 |
+| -5 – 20 | -1 | 应用，`min = -1` | -5 被裁掉 |
+| -5 – 20 | 0 | 应用，`min = 0`，诊断「未发现风险」 | 全部负数被裁掉，却报告正常——把「含零基线」误当成「数据都可见」 |
+
+### 修改文件列表
+
+| 文件 | 变化 |
+| --- | --- |
+| `src/lib/chartConfig.ts` | `resolveYAxisStart()` 改成三段范围判定（≥ max / > min / = min）；`ResolvedYAxisStart` 新增 `notice` 字段；函数注释写明含负值时不能靠固定 0 兼顾零基线与数据完整 |
+| `src/components/ChartLab.tsx` | 手动起点区新增合法但有害的 `yaxis-start-notice` 提示；起点输入框上方加一行「下界必须不大于 Y 数值最小值」的约束说明；风险面板「判断依据」文案改为引用真实数据最小值 |
+| `src/lib/chartDiagnostics.ts` | 只改注释：写清裁剪由配置层拦截、本模块以 `invalid-config` 转述，不另立规则（判定分支与状态枚举一字未改） |
+| `src/lib/chartConfig.test.ts` | 48 → 62 项（新增「部分裁剪保护」describe 14 项） |
+| `src/lib/chartDiagnostics.test.ts` | 15 → 28 项（新增与 `resolveYAxisStart` 的联动组 12 项 + 1 项改写） |
+| `src/lib/chartData.test.ts` | 105 → 107 项（`min` 键整体缺席、起点等于最小值仍下发） |
+| `src/components/ChartLab.test.tsx` | 63 → 79 项（新增「Day 7 整改：部分裁剪保护」16 项） |
+
+`src/types/chart.ts`、CSV 解析、`chartData.ts` 的聚合与统计、`dataQuality.ts`、`columnTypes.ts` 均未改动；`ruleId` 与 `configSource` 原样保留。
+
+### 修复原理
+
+判定顺序固定为「先解析、再结合真实 `yRange` 判裁剪」，`resolveYAxisStart()` 仍是纵轴起点的唯一真值来源：
+
+| 条件 | 处理 | 理由 |
+| --- | --- | --- |
+| `parsed >= yRange.max` | `appliedMin = null` + 错误（原有行为） | 所有柱子都被裁掉，连有效范围都形不成 |
+| `parsed > yRange.min` | `appliedMin = null` + 错误「起点 X 高于数据最小值 Y」 | 低于 X 的有效数值会被静默藏到轴外，与「不静默隐藏有效实验数据」直接冲突；哪怕只差 0.5 也拦 |
+| `parsed === yRange.min` | 照常应用 + `notice` | 没有数值被裁掉，但等于最小值的那批柱子长度退化为 0，如实说明「不能算已经完整可辨」 |
+| `parsed < yRange.min` | 应用，`notice = null` | 合法：数据完整，只剩零基线表达问题交给诊断 |
+| `yRange === null` | 应用（绘图层本就无点可裁） | 保持 Day 7 的安全空状态，不虚构裁剪结论 |
+| 留空 / 非数值 / `NaN` / `Infinity` | 先于范围判定拒绝 | 原有拒绝路径不变，绝不把非有限数写进坐标轴 |
+
+含负值的数据不能靠「把下界固定成 0」同时保住零基线和全部数值：0 一定大于任何一个负数，因此起点 0 在负值数据上是裁剪配置，走 `> min` 分支被拦下、退回自动范围；自动模式下 `barOption` 不带 `min` 且 `scale:false`，ECharts 自己把负值、0 与正值一并装进坐标轴。配置无效时 `appliedMin = null` → `ChartLab` 传 `yMin = undefined` → option 里连 `min` 键都不出现，配合 `EChartCanvas` 的 `setOption(option, true)`（notMerge），旧下界不会残留在真实坐标轴上。诊断侧不需要新规则：`error !== null` 先于风险判定命中 `invalid-config`，面板显示「配置无效」而不是「未发现风险」。原始记录、聚合值、`validCount` 与排除计数在整条链路上都不被触碰——起点只改写 `yAxis.min`。
+
+### 测试（456 → 501，新增 45 项）
+
+任务书要求的 10 项全部覆盖，另有 3 项断言因原行为本身是 bug 而必须改写（见「既有断言的三处变动」）：
+
+| # | 场景 | 落点 |
+| --- | --- | --- |
+| 1 | 96–98 + 起点 95 合法且仍报非零基线风险 | `chartConfig` / `chartDiagnostics` / `ChartLab` |
+| 2 | 96–98 + 起点 97 阻止部分裁剪 | 三处 + 97.5「只差一点」也拦 |
+| 3 | 96–98 + 起点 99 继续阻止 | 三处 |
+| 4 | -5–20 + 起点 -10 合法、数据完整且含 0 | 三处 |
+| 5 | -5–20 + 起点 -1 阻止 | 三处 |
+| 6 | -5–20 + 起点 0 阻止，且不得说成未发现风险 | 三处 |
+| 7 | 96–98 + 起点 0 合法、无该风险 | 三处 |
+| 8 | 换 X/Y 字段、换聚合口径后重新校验（25 对 100–500 合法、对 10–40 裁剪；30 在逐条口径裁剪、平均值口径合法） | `ChartLab` |
+| 9 | 配置无效时 `yAxis.min` 不沿用旧下界（`'min' in yAxis === false` + `setOption` 第二参 `true`） | `chartData` / `ChartLab` |
+| 10 | 数据点与记录计数不回归（`seriesData` 原样、统计文本与整改前逐字相同） | `ChartLab` |
+
+额外：起点恰好等于最小值（正 / 负两种）应用并给出零长度柱形提示、起点低于最小值时不产生多余提示、非法文本与空串仍先于裁剪判定被拒、非柱状图仍先答「不适用」、无数据仍判「无数据」。
+
+### 既有断言的三处变动（都是被修的行为本身，不是放宽测试）
+
+1. `chartConfig.test.ts` 的科学计数法用例：起点 `1e2` 配 `{min:50,max:400}` 原本断言「应用 100」，而 100 高于最小值 50 正是本轮要拦的裁剪 → 数据范围改为 `{min:150,max:400}`，科学计数法的解析覆盖不变。
+2. `chartDiagnostics.test.ts` 的「起点 5、数据 -10..20 → 风险」：该组合现在在配置层就被拦下，已不可能进入绘图 → 改为走真实解析链断言「配置无效」，并补一条正数据（6..20 + 起点 5）仍判风险，风险识别覆盖没有减少。
+3. `ResolvedYAxisStart` 增加 `notice` 字段后，auto 用例的 `toEqual` 与测试内最小构造器同步补 `notice: null`（纯结构对齐）。
+
+除这三处外，Day 1–6 与 Day 7 的既有断言一项未删、一项未放宽。
+
+### 测试与构建结果（实际执行）
+
+| 命令 | 实际结果 |
+| --- | --- |
+| `npm run lint` | `Found 0 warnings and 0 errors.`（37 个文件，116 条规则，36 ms） |
+| `npm test` | `Test Files 13 passed (13)`，`Tests 501 passed (501)`，17 s 级；逐文件：`chartConfig 62` / `chartDiagnostics 28` / `chartData 107` / `ChartLab 79` |
+| `npm run build` | `tsc -b && vite build` 成功，`built in 387ms`；`index.html 0.69 kB`、`CSS 25.36 kB (gzip 5.79)`、`JS 832.35 kB (gzip 272.30)`；仍只有既存的单包 > 500 kB 体积提示（echarts 造成，未处理） |
+
+本机 `node` 不在 PATH 上，测试通过把 `D:/Soft_Ware`（node v25.2.1 + npm 11.6.2）临时加进 `PATH` 后执行 `npm run lint` / `npm test` / `npm run build` 得到上面的结果，不是等价命令的转述。
+
+### 真实浏览器验证（开发服务器 5180，真实 Chromium + 真实 ECharts 实例）
+
+本轮补上了 Day 7 缺的那一环：通过页面里已加载的 `/src/lib/echartsCore.ts` 拿到 `echarts` 模块，用 `echarts.getInstanceByDom(canvas).getOption()` **直接读真实坐标轴的 `yAxis[0].min`**，不再只看诊断面板文字。内置浏览器仍是 `viewport=0x0`、`visibilityState=hidden`，`take_screenshot` 返回 `NATIVE_BROWSER_VIEWPORT_UNAVAILABLE`，所以交互用 `evaluate_script` 派发真实 `click` / 原生 `input` 事件。
+
+| 检查点 | 实测（真实 `getOption()` 值） |
+| --- | --- |
+| 载入「非零基线演示数据」默认自动 | 诊断「未发现风险」，`yAxis` 无 `min`、`scale:false`，series 3 点，统计「有效记录 3 条」「Y 数值范围 96 – 98」 |
+| 手动 95 | `yAxis[0].min = 95`，诊断转「建议核查 / 柱状图非零基线」，回声「当前纵轴起点：95…」 |
+| 95 之后改 97（部分裁剪） | `yAxis[0].min` 变回缺省（**旧下界 95 没有残留**），错误文案「起点 97 高于数据最小值 96…」，诊断「配置无效」，series 仍 3 点 |
+| 改 99 | 「起点 99 不低于数据最大值 98…」，`min` 缺省，「配置无效」 |
+| 改 0（数据 96–98） | `min = 0`，「未发现风险」 |
+| 植物示例（含 -4.2）手动 0 | 阻止应用：`min` 缺省、错误文案点名 -4.2、诊断「配置无效」而不是「未发现风险」，series 10 点仍含 `-4.2` 与 `88.6` |
+| 植物示例手动 -4.2（等于最小值） | `min = -4.2` 应用，出现 `yaxis-start-notice`「…退化成长度 0…不能算已经完整可辨…」，诊断「未发现风险」（零基线确实包含） |
+| 植物示例手动 -10 | `min = -10` 应用，无错误也无代价提示 |
+| 换聚合口径后重校验（同一份起点） | 起点 0 在「原始记录」下被拦（最小值 -4.2）；切「按类别平均值」后真实最小值升到 13.14，`min = 0` 照常应用；起点 5 在平均值下应用并报「建议核查」，切回「原始记录」又变回「配置无效」 |
+| 控制台 | 无 error；仅 vite debug、React DevTools 提示与 4 条 ECharts「Can't get DOM width or height」（0×0 视口所致，非代码缺陷） |
+
+### 已知问题
+
+- 内置浏览器无可视表面（`window.innerWidth = 0`、画布 `clientWidth = 0`），**未能**完成 375 / 1280 / 1440 px 的排版与横向溢出肉眼核对，也没能截图确认柱子在真实宽度下的高度形态；本轮的浏览器结论全部来自真实 DOM 文本与真实 `getOption()` 数值，不含像素级判断。
+- 「起点恰好等于数据最小值」只给提示、不阻止应用：数值确实没被裁掉，但等于最小值的那批柱子长度为 0。是否要把这种「看不见但不缺」的柱子也一并拦下，属于产品口径选择，等审查定夺，本轮不自作主张。
+- 零长度柱形的 `notice` 出现在配置区（起点输入框下方），诊断面板本身仍只讲零基线，不重复这条代价说明；两处读的是同一个 `resolveYAxisStart()` 返回值，不存在两套判断。
+- 起点判定用的是**实际绘制点**的 `yRange`：因单图展示上限（柱状图 100）未成柱的记录不参与其中，与 Day 5–7 的「触顶」口径一致，本轮未改。
+- Day 8 修复动作的接口就位：`ruleId = bar-zero-baseline`、`configSource = chartConfig.yAxisStart` 未变，一键修复只要把配置恢复成 `{ mode: 'auto' }` 就能同时正确包含零基线、正值与负值；本轮没有任何修复按钮。
+
+### 是否需要人工验收
+
+需要：① 375 / 1280 / 1440 px 下配置区新增两行说明（约束句 + 琥珀色代价提示）与诊断面板的排版肉眼检查；② 真实可见视口下起点 95 抬高纵轴、改 97 后退回自动的柱子高度形态确认（本轮只到 `getOption()` 数值层）；③「起点等于最小值只提示不拦截」的口径是否符合预期；④ 错误文案里点名数据最小值、并明说「含负值不能靠设 0」的措辞是否合适。
+
+### 下一步（未开工，等你确认）
+
+Day 7 整改到此停止，等待代码审查。Day 8（一键恢复自动范围 → 前后对比 → 撤销）与 PNG / Markdown 导出均未开工、不在本轮范围。
+
+
+---
+## Day 7（2026-11-18）：柱状图非零基线表达风险诊断 V1
+
+唯一目标：让 FigureGuard 依据**真实用于绘图的纵轴配置**识别普通柱状图的非零基线表达风险，给出证据与建议；只检测、解释、建议，不修复、不对比、不撤销。开工前先核实 Day 6 三个待修问题：`年在前` 文案、`Date.UTC` 的 0–99 补年、极端有限数值聚合溢出——三处均已在工作区改好并有对应测试，414 项全绿，确认无需回退后再开始 Day 7。本轮未提交 Git、未推送、未发布站点。
+
+### 改了哪些文件
+
+| 文件 | 变化 |
+| --- | --- |
+| `src/types/chart.ts` | `ChartConfig` 新增 `yAxisStart: YAxisStartConfig`（`mode: 'auto' \| 'manual'` + `raw` 原文） |
+| `src/lib/chartConfig.ts` | `defaultChartConfig` 带默认自动起点；新增 `resolveYAxisStart()`：数值解析、有限性校验、裁剪判定 |
+| `src/lib/chartDiagnostics.ts` | 新增纯函数规则模块 `diagnoseBaseline()` 与诊断结果类型（不依赖 React / ECharts） |
+| `src/lib/chartData.ts` | `ChartAxisMeta.yMin?` 进入 `barOption` 的 `yAxis.min`；非有限值被忽略 |
+| `src/components/ChartLab.tsx` | 柱状图配置新增「Y 轴起点 自动/手动」控件；新增「图表表达检查」面板 `ChartExpressionCheck` |
+| `src/lib/csv.ts` · `src/components/CsvUploadPanel.tsx` · `src/App.tsx` | `loadExampleCsv(key)` 参数化；加「非零基线演示数据」入口；页脚 / 范围声明同步 |
+| `public/examples/baseline-demo.csv` | 新增合成演示数据（A=96、B=98、C=97） |
+| `src/components/ProductNotes.tsx` | 范围声明如实改为「图表表达检查已覆盖零基线一条规则，仅检测不修复」 |
+
+### 输入 = 绘图 = 诊断，三者同一来源
+
+`resolveYAxisStart(config.yAxisStart, result.yRange)` 是纵轴下界的**唯一**真值来源：自动或配置无效时 `appliedMin = null`（ECharts 不设 `min`，`scale:false` 自动含 0）；手动且合法时把该数写进 `barOption` 的 `yAxis.min`，同时原样交给 `diagnoseBaseline`。诊断不看用户输入框里的文本，只看这个真正落图的 `appliedMin`，杜绝「只改界面文字、ECharts 另用一套轴」的问题。
+
+### 判定规则（保守）
+
+仅普通数值柱状图：图表类型为 `bar`、有有限 `yRange`、配置有效，且 `appliedMin` 是**有限正数**时判为风险（此时可见上界 ≥ 数据最大值 > 该正下界，0 必落在可见范围之外）。自动模式、起点 ≤ 0 判为无风险；散点 / 折线判为「不适用」；起点无效或被裁剪判为「配置无效」并退回自动、不谎报风险；无数据不产出虚假诊断。措辞统一为「可能夸大数值差异 / 建议核查纵轴起点 / 通常建议包含零基线」，不出现「造假 / 数据错误 / 证明具有误导性」。
+
+### 诊断数据结构
+
+`BaselineDiagnostic` 带 `ruleId`（`bar-zero-baseline`）、`appliesTo`、`status`（risk/clear/not-applicable/invalid-config/no-data）、`level`、`title`、`summary`、`axisStart`（`mode` + `appliedMin`）、`dataRange`、`impact`、`recommendation`、`configSource`（`chartConfig.yAxisStart`）、`yFieldLabel`。证据全部来自真实 `yRange` 与生效 `appliedMin`，无演示数据硬编码；`configSource` / `ruleId` 供 Day 8 修复定位复用，本轮不实现修复。
+
+### 测试（414 → 456，新增 42 项，既有断言一项未删）
+
+| 文件 | 数量 | 内容 |
+| --- | --- | --- |
+| `chartDiagnostics.test.ts`（新） | 15 | A 组风险识别 + B 组图表类型边界 |
+| `chartConfig.test.ts` | +12 | `resolveYAxisStart`：合法 / 留空 / 非数值 / 溢出 / 裁剪 / 无数据 |
+| `chartData.test.ts` | +3 | `yMin` 落到真实 `yAxis.min`；非有限被忽略；散点不套用 |
+| `ChartLab.test.tsx` | +12 | C 状态联动 + D 回归：默认自动 / 95 报风险 / 回 0 消失 / 回自动 / 99 与 abc 无效 / 负数不误报 / 切换散点折线不误用 / 换 CSV 清空 / 解析错误阻止诊断 / 聚合按真实结果 |
+
+### 测试与构建结果（实际执行）
+
+| 命令 | 结果 |
+| --- | --- |
+| `npm run lint` | `Found 0 warnings and 0 errors.`（37 个文件，116 条规则） |
+| `npm test` | `Test Files 13 passed (13)`，`Tests 456 passed (456)` |
+| `npm run build` | `tsc -b && vite build` 成功，588 模块，297 ms；仍有既存 chunk > 500 kB 提示（Day 6 已有，未处理） |
+
+### 浏览器验证（开发服务器 5173，真实 Chromium / CDP `evaluate_script`）
+
+本机内置浏览器无可视表面（`viewport=0x0`、`visibilityState=hidden`），指针点击与 `take_screenshot` 返回 `NATIVE_BROWSER_VIEWPORT_UNAVAILABLE`；因此交互用 `evaluate_script` 在真实页面派发 `click` / 原生 `input` 事件驱动 React，读回渲染后的 DOM 文本，非快照推断。
+
+| 检查点 | 实测 |
+| --- | --- |
+| 加载「非零基线演示数据」→ 柱状图 | 标题「柱状图：按 group 逐条展示 value」，画布容器已挂载（`clientHeight 420`） |
+| 默认自动 | 诊断「未发现风险」，文案「纵轴按自动范围绘制并包含 0…」，auto 单选选中 |
+| 手动 95 | 诊断转「建议核查」，含「当前配置 Y 轴起点 = 95 / 数据范围 96 – 98 / 判断依据…不包含零基线 / 可能影响 / 建议」；输入框回声「当前纵轴起点：95（诊断依据与此一致）」 |
+| 改回 0 | 状态回到「未发现风险」，回声显示 0 |
+| 99 / abc / 留空 | 均为「配置无效」并给出对应中文错误，从不出现「柱状图非零基线」误报 |
+| 切到散点（演示列仅 1 个数值） | 诊断面板不出现、给「请选择字段」空状态，绝不套用柱状图规则、不误报风险 |
+| 切到折线再切回柱状图 | 手动起点保留、状态按真实范围正确刷新 |
+| 换「体验示例数据」 | 回到新文件默认：auto 选中、手动输入框消失、起点残留清空 |
+
+### 已知问题
+
+- 演示数据从任务书建议的 2 行扩为 3 行（补 `C,97`）：`columnTypes` 的 `MIN_TYPE_SAMPLES = 3` 是 Day 4 的类型置信下限，2 行会让列被判为 `unknown` 而无法选轴、图也画不出来；A=96、B=98 数值不变，起点 95 仍触发风险、范围仍 96–98。
+- 内置浏览器无视口：**未能**做像素级排版与 375 / 1280 / 1440 px 横向溢出核对，也未能读取真实 ECharts `getOption()` 的 `yAxis.min`（`echarts` 未挂到 `window`）；「输入 = ECharts 轴」由 `chartData.test.ts` 与 `ChartLab.test.tsx` 断言覆盖，浏览器只验证到诊断面板这一侧。
+- 本轮只做「检测 / 证据 / 解释 / 建议」，一键修复、前后对比、撤销留待 Day 8；面板没有放任何不可用的修复按钮。
+
+### 是否需要人工验收
+
+需要：① 真实浏览器下演示数据的纵轴是否确按 95 抬高（本轮无法截图确认，仅代码与测试层面一致）；② 375 / 1280 / 1440 px 面板与图表排版的肉眼检查；③ 风险措辞与建议是否符合预期、是否需要更克制。
+
+### 下一步（未开工，等你确认）
+
+Day 8：基于本轮 `ruleId` / `configSource` / `appliedMin` 做「一键把起点恢复零基线 → 前后对比 → 撤销」；不在本轮范围。Day 7 到此停止，等待 ChatGPT 审查。
+
+
+
+只修三个已确认的问题，不开发 Day 7。三处改动都落在「已验证的数值必须和显示一致」这条原则上：文案不能和解析规则相反，`0099` 不能被悄悄读成 `1999`，`1e308` 这类合法有限数值不能因为一次中间求和溢出就被说成无效数据。
+
+### 修改文件
+
+- 修改：`src/components/ChartLab.tsx`（提示文案；分组明细拆「可画柱」与「不可表示柱」两块；新增 `chart-overflow-note`）
+- 修改：`src/lib/chartData.ts`（`utcEpochMs()`、`formatTimeTick` 年宽补零；`compensatedTotal()` / `reduceValues()`；`CategoryGroup.representable`、`ChartDataResult.overflowGroups`、`ChartScopeSummary.overflowNote`）
+- 修改：`src/lib/chartData.test.ts`（82 → 102 项）、`src/components/ChartLab.test.tsx`（48 → 51 项）
+- 未新增依赖，未改动解析、质量诊断、`columnTypes.ts`、`EChartCanvas.tsx`、容器与路由
+
+### 修复 1：折线图日期提示「年在后」→「年在前」
+
+`ChartLab.tsx` 的提示原本写「年在后」，而 `columnTypes.ts` 的 `DATE_SHAPE` 只接受 `YYYY-MM-DD`（年在前），说明文字与实际支持的写法相反。现改为「折线图 X 轴使用日期字段（年在前、能定位到具体日期的写法，如 2026-03-02）。」。
+
+排查其他文案：`ChartLab.tsx` 里原本只出现这一处「年在后」；`chartData.ts` 是 `2026/3/2` 这种示例写法、`format.ts` / `columnTypes.ts` / `csv.ts` 没有年序描述，`docs/ACCEPTANCE.md` 无同类表述，无第二处需要改。新增一条渲染级断言（提示含「年在前」、不含「年在后」）。
+
+### 修复 2：`Date.UTC` 对 0–99 年的补年特例
+
+ECMAScript 规定 `Date.UTC(0..99, ...)` 先把年份补成 `1900..1999`，所以 `0099-02-28` 会被静默挪到 1999-02-28，同一列里 `0099` 与 `1999` 的两行还会挤到同一时刻。新增 `utcEpochMs()`：从 UTC 纪元的 `new Date(0)` 出发用 `setUTCFullYear` / `setUTCHours` 显式设置，`setUTCFullYear` 不触发补年规则，年份逐位对应输入。
+
+- 形态与日历合法性判定完全没动（仍走 `splitIsoDate` + `isCalendarValidDate`，`0000-*` 照旧 `invalidDate`、`0099-02-29` 非闰、`0400-02-29` 闰、`0099-03` 仍按月粗粒度）
+- 仍是纯 UTC 口径，没有引入本地时区
+- `formatTimeTick` 的年份改成 `pad(getUTCFullYear(), 4)`，早年份刻度不会显示成 `99-12-31`
+- 回归测试覆盖 `0001 / 0099 / 0100 / 2026`：逐位对应 + ISO 回环、`0099-12-31 + 1 天 = 0100-01-01`、`0099 ≠ Date.UTC(1999,…)`、现代日期与 `Date.UTC` 完全一致、`1999-12-31` 与 `0099-12-31` 在折线图里是两个不同时刻（按时间升序 treated 在前）
+
+### 修复 3：分类聚合的求和溢出
+
+`1e308 + 1e308` 直接得 `Infinity`，原实现把它同时喂给合计与平均值，平均值也跟着溢出。改成两级计算：
+
+- `compensatedTotal()`：Neumaier 补偿求和，`1 + 1e308 - 1e308` 这类正负抵消能拿回真实的 `1`（朴素 `reduce` 给 `-1`，原实现给 `0`——这两个错误值现在都有断言挡着）
+- `reduceValues()`：先按原始量级求和；结果为 `Infinity` 时改用「先除以组内最大绝对值 `scale`、归一化后补偿求和、再乘回」，合计为 `normalized × scale`（溢出就是溢出，如实保留 `Infinity`），平均值为 `scale × (normalized / n)`——`|normalized| ≤ n`，所以平均值必定有限、且等于有限原值的平均
+- 只有 `Infinity` 才走归一化分支，普通数据的平均值/合计仍走原来的计算路径，逐值不变
+- 不可表示的组不再进数据点：`CategoryGroup.representable = false` → 落入新字段 `overflowGroups`，`groups` / `points` 只含有限值，`series.data` 里不会出现 `NaN` 或 `Infinity`；合计口径下这根柱子不画并写明「合计无法有限表示」，平均值口径照常画 `1e308`
+- 归类严格分开：不可表示组的记录仍算 `validCount`，不进 `invalidExcluded` / `missingExcluded` / `nonFinite`，也不参与 `capHidden`；`hiddenCategoryCount` 只统计「能画但撞上 100 类展示上限」的类别。措辞由 `overflowNote`（新）与 `capNote` 分别承担，两者不再互相冒充
+- 原始记录、样本数 `n` 与来源行号在溢出组的明细里照旧保留（`samples` 改为深拷贝，明细行号最多逐条列 6 个、条数按全组算）
+
+### 测试与构建结果（实际执行）
+
+| 命令 | 实际结果 |
+| --- | --- |
+| `node_modules/vitest/vitest.mjs run src/components/ChartLab.test.tsx` | `Test Files 1 passed (1)`，`Tests 51 passed (51)`，3.86 s |
+| `node_modules/vitest/vitest.mjs run`（即 `npm test`） | `Test Files 12 passed (12)`，`Tests 414 passed (414)`，13.14 s（文档改完后复跑 12.34 s，同为全绿）——原有 391 项全部仍通过，新增 23 项（`chartData.test.ts` +20、`ChartLab.test.tsx` +3） |
+| `node_modules/oxlint/bin/oxlint`（即 `npm run lint`） | `Found 0 warnings and 0 errors.`（35 个文件，116 条规则，33 ms；复跑 32 ms 仍 0/0） |
+| `node_modules/typescript/bin/tsc -b` | 无输出，退出码 0 |
+| `node_modules/vite/bin/vite.js build`（配合上一步 = `npm run build`） | `✓ 587 modules transformed`、`✓ built in 344ms`；`index.html 0.69 kB`、`index-BXT9zd3Q.css 24.41 kB (gzip 5.66)`、`index-Bo56GICY.js 819.50 kB (gzip 268.71)`（文档改完后复跑 303 ms，产物哈希与体积一致） |
+
+本机 `node` 不在 PATH 上，因此上面几条是直接调用 `node_modules` 里的入口（与 `npm run test/lint/build` 等价），不是把 `npm run …` 跑成功了的声称。构建仍有一条既存的 chunk > 500 kB 提示（Day 6 已有，本轮未处理）。
+
+新增 23 项的分布：日期文案 1 项（渲染级）；早年份 5 项（逐位对应、不等于 1999、跨到 0100、现代日期与 `Date.UTC` 一致、日历规则不变、折线图端到端含刻度）；聚合数值 8 项（`1e308` 平均/合计、负数 `-1e308`/`-Infinity`、`Number.MAX_VALUE`、`1.5e308` 混合、三种顺序的正负抵消、普通数据逐值不变）；端到端 8 项（不画柱但记录有效、样本与行号保留、`series.data` 全有限、平均值口径照样画、121 类时的上限/触顶/不可表示分账、原始模式不受影响、文案不把溢出说成类型不符或触顶、无溢出时不出现提示）。
+
+内置植物样例的结果未变：12 条记录、10 条有效、2 条缺失，control 平均 `13.14`、treated 平均 `26.44`，折线图仍是 10 条有效观测——这些既有断言在本轮全绿。
+
+### 已知问题
+
+- 合计口径下溢出组仍会先算出一个 `Infinity` 合计再判定不画；`overflowNote` 只保证不把 `Infinity` 传给 ECharts，没有替用户改写这个数学事实。
+- 归一化分支的平均值写成 `scale × (normalized / n)`，`normalized` 是除以 `scale` 之后的补偿和，因此极端大数之间求平均可能损失最后一两位精度；本轮实测样例仍落在精确值上，测试对这类结果用 `toBeCloseTo` 而不是逐位相等。
+- 溢出判定按「结果是否有限」二分类，不区分「刚好触顶 `MAX_VALUE`」与「真正不可表示」；`Number.MAX_VALUE + Number.MAX_VALUE` 归入后者（合计）符合 IEEE754 结果，但不是「数据坏了」。
+- 溢出文案与「不画这根柱子」只在 jsdom 里断言过 DOM 文本，没有做真实浏览器可视验证（本轮未起开发服务器、没有截图），琥珀色区块在真实宽度下的排版仍需人工过一眼。
+- 未做真实浏览器的可视化验证（本轮不需要），极端大数的柱高在 ECharts 里仍是一条拉到顶的柱子——它没有进 `Infinity`，但视觉上与 `1e5` 级别的柱子无法比较，这一点没有额外提示。
+
+### 是否需要人工验收
+
+需要：① 「年在前」这句提示的措辞是否符合你的表述习惯；② 合计无法有限表示时「不画这根柱子 + 琥珀色明细」是否比「画到顶并标注」更好；③ 不可表示组的记录数是否要在总量说明里再单独给一行数字（当前写在描述末尾与琥珀色区块两处）。
+
+### 下一步（未开工，等你确认）
+
+Day 6 到此停止，等待最终验收。Day 7 候选（尚未授权）：图表表达诊断、修复建议与撤销、导出。本轮未提交 Git、未推送、未发布站点；`.scratch/` 下的临时探测脚本已删除，工作区只剩本轮的 4 个源码/测试文件改动与本文件。
+---
 ## Day 6（2026-11-18）：图表配置与科学表达规范（F4 V2）
 
 只做增量：复用 Day 5 的 `csv.ts` / `columnTypes.ts` / `chartData.ts` / `EChartCanvas.tsx` 架构，新增配置层与聚合、折线两种口径。未开发诊断、修复对比、历史记录与导出，未提交 Git、未推送、未发布。

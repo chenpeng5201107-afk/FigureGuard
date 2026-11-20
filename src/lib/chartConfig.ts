@@ -1,4 +1,5 @@
-import type { CategoryAggregation, ChartAxisConfig, ChartConfig, ChartKind } from '../types/chart';
+import { formatComputedValue } from './format';
+import type { CategoryAggregation, ChartAxisConfig, ChartConfig, ChartKind, YAxisStartConfig } from '../types/chart';
 
 /**
  * 图表配置纯函数层：标题 / 坐标轴标题 / 单位的默认生成、用户编辑协调、输入校验与「修改前后对比快照」。
@@ -57,8 +58,19 @@ export function emptyAxisConfig(): ChartAxisConfig {
   return { title: '', titleEdited: false, unit: '' };
 }
 
+/** Y 轴起点默认自动：不固定下界，由 ECharts 在 scale:false 下包含零基线。 */
+export function emptyYAxisStart(): YAxisStartConfig {
+  return { mode: 'auto', raw: '' };
+}
+
 export function defaultChartConfig(): ChartConfig {
-  return { title: '', titleEdited: false, xAxis: emptyAxisConfig(), yAxis: emptyAxisConfig() };
+  return {
+    title: '',
+    titleEdited: false,
+    xAxis: emptyAxisConfig(),
+    yAxis: emptyAxisConfig(),
+    yAxisStart: emptyYAxisStart(),
+  };
 }
 
 export interface ChartFieldLabels {
@@ -304,4 +316,110 @@ export function diffChartConfig(before: ChartConfigSnapshot, after: ChartConfigS
     }
   }
   return changes;
+}
+
+/** 手动起点接受的写法：可带符号的十进制整数 / 小数 / 科学计数法，其它一律按无效拒绝，绝不放进 NaN / Infinity。 */
+const MANUAL_START_RE = /^[+-]?(\d+(\.\d+)?|\.\d+)([eE][+-]?\d+)?$/;
+
+export interface ResolvedYAxisStart {
+  mode: 'auto' | 'manual';
+  /** manual 且可安全应用时：真正用于 ECharts 纵轴的 min；auto 或配置无效时为 null。 */
+  appliedMin: number | null;
+  /** 用户原文解析出的有限数值（即便因裁剪未被应用，也回显给用户）；auto 或无法解析时为 null。 */
+  parsed: number | null;
+  /** 配置无效（无法解析，或会把有效数值裁到坐标轴以外）时的可读说明；有效或自动时为 null。 */
+  error: string | null;
+  /**
+   * 配置已经应用、但有必须如实告诉用户的表达代价：起点正好等于数据最小值时，
+   * 等于该最小值的柱子会退化成长度 0。没有这类代价时为 null，它不表示配置无效。
+   */
+  notice: string | null;
+}
+
+/**
+ * 把「Y 轴起点」配置解析成真正用于绘图的下界，并结合真实 Y 范围判断能否形成有效坐标轴。
+ *
+ * - 自动模式不改坐标轴：交给 ECharts 在 `scale:false` 下自动容纳负值、0 与全部数据。
+ * - 手动模式只接受有限数值；留空、非数字、超出可表示范围都给出明确错误且不应用。
+ * - 起点 ≥ 数据最大值：会把全部柱子裁到坐标轴以下、无法形成有效范围 → 阻止应用。
+ * - 起点 > 数据最小值：低于起点的有效数值会被静默藏到坐标轴以下 → 同样阻止应用。
+ *   数据含负值时「起点 0 已经包含零基线」不是放行理由：0 仍会裁掉全部负数。
+ * - 起点恰好等于数据最小值：没有数值被裁掉，照常应用，但要说明这批柱子会退化成长度 0，不能当成已经完整可辨。
+ * - 返回值是诊断与 ECharts option 的**唯一**纵轴起点来源，保证「输入 = 实际绘图 = 诊断依据」三者一致。
+ *   Day 8 的一键修复只要把配置恢复成 `{ mode: 'auto' }`，就能同时正确包含零基线、正值与负值。
+ */
+export function resolveYAxisStart(
+  config: YAxisStartConfig,
+  yRange: { min: number; max: number } | null,
+): ResolvedYAxisStart {
+  if (config.mode === 'auto') return { mode: 'auto', appliedMin: null, parsed: null, error: null, notice: null };
+
+  const text = config.raw.trim();
+  if (text === '') {
+    return {
+      mode: 'manual',
+      appliedMin: null,
+      parsed: null,
+      error: '手动设置需要输入一个有限数值（如 95、0、-10）。留空时不会改动纵轴起点，已退回自动范围。',
+      notice: null,
+    };
+  }
+  if (!MANUAL_START_RE.test(text)) {
+    return {
+      mode: 'manual',
+      appliedMin: null,
+      parsed: null,
+      error: `「${text}」不是有效的数值起点，请输入如 95、-10、0.5 这样的有限数字（不接受文字、NaN 或无穷大）。`,
+      notice: null,
+    };
+  }
+  const parsed = Number(text);
+  if (!Number.isFinite(parsed)) {
+    return {
+      mode: 'manual',
+      appliedMin: null,
+      parsed: null,
+      error: `「${text}」超出可表示范围（NaN / Infinity 不能作为坐标轴起点），已退回自动范围。`,
+      notice: null,
+    };
+  }
+  if (yRange === null) return { mode: 'manual', appliedMin: parsed, parsed, error: null, notice: null };
+
+  const min = formatComputedValue(yRange.min);
+  const max = formatComputedValue(yRange.max);
+  if (parsed >= yRange.max) {
+    return {
+      mode: 'manual',
+      appliedMin: null,
+      parsed,
+      error:
+        `起点 ${parsed} 不低于数据最大值 ${max}，` +
+        '会把所有柱子都裁到坐标轴以下、无法形成有效范围，因此没有应用；请改小起点或切回自动。',
+      notice: null,
+    };
+  }
+  if (parsed > yRange.min) {
+    return {
+      mode: 'manual',
+      appliedMin: null,
+      parsed,
+      error:
+        `起点 ${parsed} 高于数据最小值 ${min}，低于 ${parsed} 的有效数值会被坐标轴下界裁掉、在图上看不见` +
+        '（数值本身没有被改写或删除，只是被隐藏），因此没有应用；' +
+        `含负值的数据不能靠「起点设成 0」同时保住零基线和全部数据，请把起点设为不大于 ${min} 的数，或切回自动范围。`,
+      notice: null,
+    };
+  }
+  if (parsed === yRange.min) {
+    return {
+      mode: 'manual',
+      appliedMin: parsed,
+      parsed,
+      error: null,
+      notice:
+        `起点正好等于数据最小值 ${min}：没有数值被裁到坐标轴以下，但等于 ${min} 的那些柱子会退化成长度 0，` +
+        '只剩坐标轴上的一个位置，不能算已经完整可辨；要让它们也看出高度，起点需要低于该最小值或切回自动范围。',
+    };
+  }
+  return { mode: 'manual', appliedMin: parsed, parsed, error: null, notice: null };
 }

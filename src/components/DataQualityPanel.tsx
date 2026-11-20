@@ -118,7 +118,7 @@ function TypeCard({
         <div className="mt-2 space-y-1.5">
           <p className="text-xs font-medium text-amber-900">
             待核查的类型不一致候选 {formatCount(profile.conflictCount)} 处
-            {profile.conflictsTruncated ? `（最多列出 ${MAX_ITEMIZED_TYPE_CONFLICTS} 处）` : ''}：
+            {profile.conflictsTruncated ? `（最多列出 ${MAX_ITEMIZED_TYPE_CONFLICTS} 处）` : ''}，点击可在下方表格中定位并高亮该单元格：
           </p>
           <div className="flex flex-wrap gap-1.5">
             {profile.conflicts.map((candidate) => (
@@ -295,7 +295,7 @@ export function DataQualityPanel({ table, onFocusColumn }: DataQualityPanelProps
             整列结论按投票结果决定：有效样本少于 3 个 → 无法确定；主要形态占比低于 70% → 无法确定（类型接近混合，不下武断结论）；字段名带 <code className="font-mono">id</code> / <code className="font-mono">编号</code> / <code className="font-mono">学号</code> / <code className="font-mono">code</code> / <code className="font-mono">phone</code> 这类标识符线索 → 直接按文本或类别处理，不做冲突比对，避免把 <code className="font-mono">007</code> 这类编号说成类型错误。
           </p>
           <p className="mt-2 break-words">
-            类型冲突候选：当一列具有稳定的主要类型时，标出与该类型不一致的单元格；冲突不等于错误，可能只是备注、缺测标记、单位不一致或串列。本期只报告、不修改、不删除、不填充任何单元格。
+            类型冲突候选：当一列具有稳定的主要类型时，标出与该类型不一致的单元格；冲突不等于错误，可能只是备注、缺测标记、单位不一致或串列。系统只报告、不修改、不删除、不填充任何单元格。
           </p>
         </details>
       </div>
@@ -345,7 +345,7 @@ export function DataQualityPanel({ table, onFocusColumn }: DataQualityPanelProps
           「涉及重复的记录」只表示整行每个字段都相同，不必然等于录错；重复的行没有被删除或改写。
           缺失率与重复率的分母是当前文件的记录数，只有表头没有数据行时按 0 处理。
           字段类型识别是启发式的，不承诺 100% 正确；类型冲突候选只是「与整列主流写法不同」的提示，不直接等同于数据错误。
-          跨行定位与高亮在后续版本提供，本期只给数据行序号文本。
+          字段类型冲突的候选值可点击定位到表格中对应的行列并高亮；缺失与重复的逐条问题只给出数据行序号文本，不提供跳转定位。
         </p>
       </details>
     </section>

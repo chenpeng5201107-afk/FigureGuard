@@ -22,6 +22,7 @@ import {
 import { analyzeColumnTypes } from './columnTypes';
 import { parseCsvText } from './csv';
 import { formatComputedValue } from './format';
+import type { CategoryGroup, ChartDataResult } from './chartData';
 import type { CsvTable } from '../types/csv';
 
 /** UTC 下的一天恒定 86,400,000 毫秒，用它断言刻度是否落在整天上。 */
@@ -280,6 +281,53 @@ describe('toEChartsOption', () => {
     expect(series.data).toEqual([-5, 3, 7]);
   });
 
+  it('柱状图 meta.yMin 为有限值时写进真实 ECharts yAxis.min（Day 7 起点）', () => {
+    const table = tableOf(['g,v', 'A,96', 'B,98'].join('\n'));
+    const result = computeChartData(table, 'bar', 0, 1);
+    const option = toEChartsOption(result, { xLabel: 'g', yLabel: 'v', yMin: 95 });
+    const yAxis = option.yAxis as Record<string, unknown>;
+    expect(yAxis.min).toBe(95);
+    expect(yAxis.scale).toBe(false);
+    // 数值不被改写：数据点仍是真实的 96 / 98。
+    const series = (option.series as Record<string, unknown>[])[0];
+    expect(series.data).toEqual([96, 98]);
+  });
+
+  it('柱状图 meta.yMin 非有限时忽略，绝不把 NaN / Infinity 放进坐标轴', () => {
+    const table = tableOf(['g,v', 'A,96', 'B,98'].join('\n'));
+    const result = computeChartData(table, 'bar', 0, 1);
+    const option = toEChartsOption(result, { xLabel: 'g', yLabel: 'v', yMin: Number.NaN });
+    const yAxis = option.yAxis as Record<string, unknown>;
+    expect(yAxis.min).toBeUndefined();
+  });
+
+  it('柱状图不传 meta.yMin 时整个 min 键都不出现（Day 7 整改：配合 notMerge 退回自动范围）', () => {
+    const table = tableOf(['g,v', 'A,96', 'B,98'].join('\n'));
+    const result = computeChartData(table, 'bar', 0, 1);
+    const yAxis = toEChartsOption(result, { xLabel: 'g', yLabel: 'v' }).yAxis as Record<string, unknown>;
+    // 只写 `min: undefined` 在合并语义下仍可能被当成「沿用上一次的下界」，因此这里必须是不含 min 键。
+    expect('min' in yAxis).toBe(false);
+    expect(yAxis.scale).toBe(false);
+  });
+
+  it('起点等于数据最小值时该下界照样真实写进 yAxis.min', () => {
+    const table = tableOf(['g,v', 'A,96', 'B,98'].join('\n'));
+    const result = computeChartData(table, 'bar', 0, 1);
+    const yAxis = toEChartsOption(result, { xLabel: 'g', yLabel: 'v', yMin: 96 }).yAxis as Record<string, unknown>;
+    expect(yAxis.min).toBe(96);
+    const series = (result.points ?? []).map((point) => point.yValue);
+    expect(series).toEqual([96, 98]);
+  });
+
+  it('散点图 / 折线图忽略 yMin，不套用柱状图起点', () => {
+    const scatter = toEChartsOption(computeChartData(tableOf(['x,y', '1,2'].join('\n')), 'scatter', 0, 1), {
+      xLabel: 'x',
+      yLabel: 'y',
+      yMin: 95,
+    });
+    expect((scatter.yAxis as Record<string, unknown>).min).toBeUndefined();
+  });
+
   it('散点图 scale 为 true 且数据是真实的 [x, y] 对', () => {
     const table = tableOf(['x,y', '1,2', '3,4'].join('\n'));
     const result = computeChartData(table, 'scatter', 0, 1);
@@ -444,6 +492,70 @@ describe('aggregateByCategory：按类别平均与求和（纯函数）', () => 
   });
 });
 
+describe('aggregateByCategory：极端大数与求和溢出', () => {
+  function groupOf(values: number[], method: 'mean' | 'sum'): CategoryGroup {
+    const groups = aggregateByCategory(
+      values.map((value, index) => ({ rowIndex: index, category: 'a', value, rawValue: String(value) })),
+      method,
+    );
+    expect(groups).toHaveLength(1);
+    return groups[0];
+  }
+
+  it('两个 1e308 的平均值是 1e308，不被中间求和的溢出带成 Infinity', () => {
+    const group = groupOf([1e308, 1e308], 'mean');
+    expect(group.value).toBe(1e308);
+    expect(Number.isFinite(group.value)).toBe(true);
+    expect(group.representable).toBe(true);
+  });
+
+  it('同样两个数求和确实超出可表示范围：如实标注不可表示，样本与行号照旧保留', () => {
+    const group = groupOf([1e308, 1e308], 'sum');
+    expect(group.value).toBe(Number.POSITIVE_INFINITY);
+    expect(group.representable).toBe(false);
+    expect(group.samples.map((sample) => sample.rowIndex)).toEqual([0, 1]);
+    expect(group.samples.map((sample) => sample.value)).toEqual([1e308, 1e308]);
+  });
+
+  it('负向极端值同样处理：平均值 -1e308 可表示，求和 -Infinity 不可表示', () => {
+    const mean = groupOf([-1e308, -1e308], 'mean');
+    expect(mean.value).toBe(-1e308);
+    expect(mean.representable).toBe(true);
+    const sum = groupOf([-1e308, -1e308], 'sum');
+    expect(sum.value).toBe(Number.NEGATIVE_INFINITY);
+    expect(sum.representable).toBe(false);
+  });
+
+  it('Number.MAX_VALUE 成对时平均值仍可表示', () => {
+    const group = groupOf([Number.MAX_VALUE, Number.MAX_VALUE], 'mean');
+    expect(group.value).toBe(Number.MAX_VALUE);
+    expect(group.representable).toBe(true);
+  });
+
+  it('中间溢出但真实结果可表示时，按真实值返回', () => {
+    const group = groupOf([1.5e308, 1.5e308, -1.5e308], 'sum');
+    expect(group.value).toBe(1.5e308);
+    expect(group.representable).toBe(true);
+  });
+
+  it('正负抵消不把低位吞掉，且与记录顺序无关', () => {
+    expect(groupOf([1, 1e308, -1e308], 'sum').value).toBe(1);
+    expect(groupOf([1e308, -1e308, 1], 'sum').value).toBe(1);
+    expect(groupOf([-1e308, 1, 1e308], 'sum').value).toBe(1);
+    expect(groupOf([1, 1e308, -1e308], 'mean').value).toBeCloseTo(1 / 3, 15);
+  });
+
+  it('普通数据不受影响：补偿求和只是把朴素累加丢掉的低位收回来', () => {
+    const control = [12.4, 13.0, 12.7, 13.5, 14.1];
+    expect(groupOf(control, 'sum').value).toBe(65.7);
+    expect(groupOf(control, 'mean').value).toBe(13.14);
+    expect(groupOf([0.1, 0.2, 0.3], 'sum').value).toBe(0.6);
+    expect(groupOf([0, -2], 'mean').value).toBe(-1);
+    expect(groupOf([7.5], 'mean').value).toBe(7.5);
+    expect(groupOf([7.5], 'sum').value).toBe(7.5);
+  });
+});
+
 describe('computeChartData：聚合模式的统计口径', () => {
   it('平均值模式一个类别一根柱子，柱子数与有效记录数分别统计', () => {
     const table = tableOf(PLANT_CSV);
@@ -542,6 +654,99 @@ describe('computeChartData：聚合模式的统计口径', () => {
   });
 });
 
+describe('computeChartData：聚合结果无法有限表示的类别组', () => {
+  const OVERFLOW_CSV = ['group,value', 'a,1e308', 'a,1e308', 'b,2', 'b,3'].join('\n');
+  const OVERFLOW_CONTEXT = { xLabel: 'group', yLabel: 'value', title: '柱状图：按 group 计算 value 求和' };
+
+  function seriesOf(result: ChartDataResult): number[] {
+    const option = toEChartsOption(result, { xLabel: 'group', yLabel: 'value' });
+    const series = (option.series as Array<{ data: number[] }>)[0];
+    return series.data;
+  }
+
+  it('求和溢出的一组不成柱，但记录仍算有效、不算类型排除', () => {
+    const result = computeChartData(tableOf(OVERFLOW_CSV), 'bar', 0, 1, 'sum');
+    expect(result.validCount).toBe(4);
+    expect(result.missingExcluded).toBe(0);
+    expect(result.invalidExcluded).toBe(0);
+    expect(result.excludedReasons.nonFinite).toBe(0);
+    expect(result.categoryTotal).toBe(2);
+    expect(result.displayedCount).toBe(1);
+    expect(result.groups.map((group) => group.key)).toEqual(['b']);
+    expect(result.overflowGroups.map((group) => group.key)).toEqual(['a']);
+    expect(result.capHidden).toBe(0);
+    expect(result.yRange).toEqual({ min: 5, max: 5 });
+  });
+
+  it('不可表示组保留原始记录、样本数与来源行号', () => {
+    const result = computeChartData(tableOf(OVERFLOW_CSV), 'bar', 0, 1, 'sum');
+    const group = result.overflowGroups[0];
+    expect(group.value).toBe(Number.POSITIVE_INFINITY);
+    expect(group.representable).toBe(false);
+    expect(group.samples.length).toBe(2);
+    expect(group.firstRowIndex).toBe(0);
+    expect(group.samples.map((sample) => sample.rowIndex)).toEqual([0, 1]);
+    expect(group.samples.map((sample) => sample.rawValue)).toEqual(['1e308', '1e308']);
+    expect(group.samples.map((sample) => Number.isFinite(sample.value))).toEqual([true, true]);
+  });
+
+  it('ECharts 数据点与数值范围里都不出现 NaN / Infinity', () => {
+    const result = computeChartData(tableOf(OVERFLOW_CSV), 'bar', 0, 1, 'sum');
+    expect(seriesOf(result)).toEqual([5]);
+    expect(result.points.every((point) => Number.isFinite(point.yValue))).toBe(true);
+  });
+
+  it('同一份数据改用平均值口径时两根柱子都画得出来', () => {
+    const result = computeChartData(tableOf(OVERFLOW_CSV), 'bar', 0, 1, 'mean');
+    expect(result.overflowGroups).toEqual([]);
+    expect(result.displayedCount).toBe(2);
+    expect(result.points.map((point) => point.yValue)).toEqual([1e308, 2.5]);
+    expect(result.capHidden).toBe(0);
+  });
+
+  it('不可表示组不占用展示上限名额，触顶统计仍只按上限计算', () => {
+    const rows = ['group,value', 'huge,1e308', 'huge,1e308'];
+    for (let index = 0; index < 120; index += 1) {
+      rows.push(`c${index},${index + 1}`);
+      rows.push(`c${index},10`);
+    }
+    const result = computeChartData(tableOf(rows.join('\n')), 'bar', 0, 1, 'sum');
+    expect(result.categoryTotal).toBe(121);
+    expect(result.overflowGroups).toHaveLength(1);
+    expect(result.groups).toHaveLength(100);
+    expect(result.hiddenCategoryCount).toBe(20);
+    expect(result.displayedCount).toBe(100);
+    expect(result.validCount).toBe(242);
+    // 上限之外的 20 组 × 2 条才是 capHidden；溢出组的 2 条另算，不被说成触顶。
+    expect(result.capHidden).toBe(40);
+    expect(seriesOf(result).every((value) => Number.isFinite(value))).toBe(true);
+  });
+
+  it('逐条模式不受影响：1e308 本身是有效数值，照常成柱', () => {
+    const result = computeChartData(tableOf(OVERFLOW_CSV), 'bar', 0, 1);
+    expect(result.overflowGroups).toEqual([]);
+    expect(result.displayedCount).toBe(4);
+    expect(result.points.map((point) => point.yValue)).toEqual([1e308, 1e308, 2, 3]);
+  });
+
+  it('口径说明把「聚合结果不可表示」与「原始数值无效」分开陈述', () => {
+    const result = computeChartData(tableOf(OVERFLOW_CSV), 'bar', 0, 1, 'sum');
+    const scope = summarizeChartScope(result, OVERFLOW_CONTEXT);
+    expect(scope.overflowNote).toContain('1 个类别组（共 2 条记录）的聚合结果');
+    expect(scope.overflowNote).toContain('没有被算进「类型不符排除」');
+    expect(scope.headline).toContain('符合条件的有效记录 4 条');
+    expect(scope.headline).toContain('因类型不符或非有限数值排除 0 条');
+    expect(scope.capNote).toBeNull();
+    expect(scope.description).toContain('聚合结果无法有限表示、未成柱');
+  });
+
+  it('没有不可表示组时不输出多余提示', () => {
+    const result = computeChartData(tableOf(PLANT_CSV), 'bar', 2, 3, 'sum');
+    expect(result.overflowGroups).toEqual([]);
+    expect(summarizeChartScope(result, { xLabel: 'group', yLabel: 'height_cm', title: '柱状图' }).overflowNote).toBeNull();
+  });
+});
+
 describe('parseTimeCell：时间轴取值判定', () => {
   it('能定位到具体日期的写法映射为 UTC 毫秒', () => {
     expect(parseTimeCell('2026-03-02')).toEqual({ state: 'valid', epochMs: Date.UTC(2026, 2, 2) });
@@ -575,6 +780,52 @@ describe('parseTimeCell：时间轴取值判定', () => {
     expect(parseTimeCell('')).toEqual({ state: 'missing', missingKind: 'empty' });
     expect(parseTimeCell('   ')).toEqual({ state: 'missing', missingKind: 'whitespace' });
     expect(parseTimeCell(null)).toEqual({ state: 'missing', missingKind: 'structuralNull' });
+  });
+});
+
+describe('parseTimeCell：四位早年份按字面年份解释（Date.UTC 的 0–99 补年规则）', () => {
+  function epochOf(cell: string): number {
+    const evaluation = parseTimeCell(cell);
+    if (evaluation.state !== 'valid') throw new Error(`${cell} 本该按有效日期解析`);
+    return evaluation.epochMs;
+  }
+  const isoOf = (cell: string): string => new Date(epochOf(cell)).toISOString();
+
+  it('0001 / 0099 / 0100 的时间戳落回输入年份本身', () => {
+    expect(isoOf('0001-01-01')).toBe('0001-01-01T00:00:00.000Z');
+    expect(isoOf('0099-02-28')).toBe('0099-02-28T00:00:00.000Z');
+    expect(isoOf('0099-12-31')).toBe('0099-12-31T00:00:00.000Z');
+    expect(isoOf('0100-01-01')).toBe('0100-01-01T00:00:00.000Z');
+    expect(isoOf('0001-01-01 23:59:59')).toBe('0001-01-01T23:59:59.000Z');
+  });
+
+  it('0099 不再被挪到 1999，且 0099-12-31 的次日就是 0100-01-01', () => {
+    expect(epochOf('0099-02-28')).not.toBe(Date.UTC(1999, 1, 28));
+    expect(epochOf('0099-12-31') + MS_PER_DAY).toBe(epochOf('0100-01-01'));
+  });
+
+  it('现代日期的结果与修复前逐位一致', () => {
+    expect(epochOf('2026-03-02')).toBe(Date.UTC(2026, 2, 2));
+    expect(epochOf('2026-03-02 08:15:30')).toBe(Date.UTC(2026, 2, 2, 8, 15, 30));
+    expect(epochOf('1999-12-31')).toBe(Date.UTC(1999, 11, 31));
+  });
+
+  it('形态与日历合法性规则照旧：0 年不接受、非闰年的 2 月 29 日排除、整百年按格里高利规则判断', () => {
+    expect(parseTimeCell('0000-01-01')).toEqual({ state: 'invalid', invalidKind: 'invalidDate' });
+    expect(parseTimeCell('0099-02-29')).toEqual({ state: 'invalid', invalidKind: 'invalidDate' });
+    expect(parseTimeCell('0100-02-29')).toEqual({ state: 'invalid', invalidKind: 'invalidDate' });
+    expect(parseTimeCell('0099-13-01')).toEqual({ state: 'invalid', invalidKind: 'invalidDate' });
+    expect(parseTimeCell('0099-03')).toEqual({ state: 'invalid', invalidKind: 'coarseDate' });
+    expect(isoOf('0400-02-29')).toBe('0400-02-29T00:00:00.000Z');
+  });
+
+  it('折线图里 0099 与 1999 是两个不同时刻，按时间先后排列', () => {
+    const table = tableOf(['d,v', '1999-12-31,1', '0099-12-31,2'].join('\n'));
+    const result = computeChartData(table, 'line', 0, 1);
+    expect(result.timeRange).toEqual({ min: epochOf('0099-12-31'), max: epochOf('1999-12-31') });
+    expect(result.points.map((point) => point.rowIndex)).toEqual([1, 0]);
+    expect(result.points.map((point) => point.yValue)).toEqual([2, 1]);
+    expect(formatTimeTick(epochOf('0099-12-31'))).toBe('0099-12-31');
   });
 });
 
@@ -830,6 +1081,14 @@ describe('toEChartsOption：折线图与聚合柱状图', () => {
     expect(withNames.left).toBe(48);
     expect(withoutNames.left).toBe(8);
     expect(withNames.bottom).toBeGreaterThan(withoutNames.bottom);
+  });
+
+  it('纵轴名躲开刻度文字：nameGap 留出小数刻度的宽度，避免轴名与刻度重叠', () => {
+    const table = tableOf(PLANT_CSV);
+    const result = computeChartData(table, 'bar', 2, 3);
+    const yAxis = (toEChartsOption(result, { xLabel: 'group', yLabel: 'height_cm' }) as { yAxis: Record<string, unknown> }).yAxis;
+    // 浏览器实测：起点 95 时刻度形如 96.5，nameGap 26 会让旋转轴名压住刻度，故留出至少 40。
+    expect(yAxis.nameGap).toBeGreaterThanOrEqual(40);
   });
 });
 

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
-import { MAX_ITEMIZED_ISSUES } from '../lib/csv';
+import { BASELINE_EXAMPLE_CSV_NAME, MAX_ITEMIZED_ISSUES } from '../lib/csv';
 import { classifyColumn, layoutClassForKind } from '../lib/display';
 import { formatBytes, formatCount } from '../lib/format';
 import { DataQualityPanel } from './DataQualityPanel';
@@ -266,12 +266,21 @@ export function DataPreview({ table, onReset }: DataPreviewProps) {
         </div>
 
         {table.source === 'example' ? (
-          <p className="mt-4 rounded-xl bg-brand-soft px-4 py-3 text-sm leading-relaxed text-brand-dark">
-            当前表格来自内置的 <strong>plant-growth.csv</strong>
-            ，是为演示构造的<strong>合成植物生长数据</strong>，与任何真实实验无关；其中刻意保留了空值与可疑数值，
-            供数据质量概览与后续质检功能使用。当前版本会统计缺失值与疑似重复记录，但还没有异常值判断，
-            因此不会断言这些数值本身是否离谱。
-          </p>
+          table.fileName === BASELINE_EXAMPLE_CSV_NAME ? (
+            <p className="mt-4 rounded-xl bg-brand-soft px-4 py-3 text-sm leading-relaxed text-brand-dark">
+              当前表格来自内置的 <strong>{BASELINE_EXAMPLE_CSV_NAME}</strong>
+              ，是为演示纵轴起点问题构造的<strong>合成数据</strong>（A=96、B=98、C=97），与任何真实实验无关；
+              它的作用是把「发现非零基线 → 一键恢复零基线 → 前后对比 → 撤销」这一条路走完。
+              修复只改图表纵轴配置，这份合成数据的单元格、记录数与行号都不会被改写。
+            </p>
+          ) : (
+            <p className="mt-4 rounded-xl bg-brand-soft px-4 py-3 text-sm leading-relaxed text-brand-dark">
+              当前表格来自内置的 <strong>plant-growth.csv</strong>
+              ，是为演示构造的<strong>合成植物生长数据</strong>，与任何真实实验无关；其中刻意保留了空值与可疑数值，
+              供数据质量概览与后续质检功能使用。当前版本会统计缺失值与疑似重复记录，但还没有异常值判断，
+              因此不会断言这些数值本身是否离谱。
+            </p>
+          )
         ) : null}
 
         <dl className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">

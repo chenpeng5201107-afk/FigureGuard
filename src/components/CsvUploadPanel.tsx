@@ -2,12 +2,13 @@ import { useRef, useState } from 'react';
 import type { ChangeEvent, DragEvent, MouseEvent } from 'react';
 
 import { MAX_CSV_BYTES } from '../lib/csv';
+import type { ExampleCsvKey } from '../lib/csv';
 import { formatBytes } from '../lib/format';
 
 interface CsvUploadPanelProps {
   busy: boolean;
   onFileSelected: (file: File) => void;
-  onUseExample: () => void;
+  onUseExample: (key: ExampleCsvKey) => void;
 }
 
 export function CsvUploadPanel({ busy, onFileSelected, onUseExample }: CsvUploadPanelProps) {
@@ -80,10 +81,18 @@ export function CsvUploadPanel({ busy, onFileSelected, onUseExample }: CsvUpload
             <button
               type="button"
               disabled={busy}
-              onClick={onUseExample}
+              onClick={() => onUseExample('plant')}
               className="w-full rounded-xl bg-brand px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-brand-dark disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto lg:w-full"
             >
               体验示例数据
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => onUseExample('baseline')}
+              className="w-full rounded-xl border border-brand bg-white px-5 py-3 text-sm font-semibold text-brand-dark transition-colors hover:bg-brand-soft disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto lg:w-full"
+            >
+              非零基线演示数据
             </button>
             <button
               type="button"
